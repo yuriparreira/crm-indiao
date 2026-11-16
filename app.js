@@ -1,578 +1,1500 @@
-// CRM Indião Store v2 — Supabase + GitHub Pages
+// CRM Indião Store v3 — o painel do Apps Script (crm.html) portado para o Supabase, 16/11/2026.
+// As telas, cartões, regras de alerta e roteiros são os do painel antigo; o que mudou é de onde vêm os dados:
+// as funções google.script.run (CRM.gs) viraram funções do banco (crm_boot, crm_update_lead etc.).
+// Novidades da v3: login por e-mail, aba Visitas (roteiros e prestação de contas) e "Nova loja" para os SDRs.
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm';
 
-const SUPABASE_URL = 'https://lnihrsdpogrtoqodbmtu.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_4IH9InQvatRxrUMX34yrZg_s8bzaEFS';
-const sb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
+var SUPABASE_URL = 'https://lnihrsdpogrtoqodbmtu.supabase.co';
+var SUPABASE_KEY = 'sb_publishable_4IH9InQvatRxrUMX34yrZg_s8bzaEFS';
+var sb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
 
-const BASE = { nome: 'Jaguariúna, SP', lat: -22.7056, lng: -46.9858 };
-const ROTAS = {
+var LOGADO = false;
+// Dados do painel (mesmo formato do bootstrap antigo). Começa vazio até o login.
+var D = { me: '', admin: false, papel: '', today: new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' }), status: [], pvStatus: [], sellers: [], origens: [], temps: [], motivos: [], ufs: [], fuTipos: [], leads: [], pv: [], prosp: null };
+
+// Mesmas chamadas do painel antigo, agora no Supabase
+var RPC = {
+  crmReload: function () { return ['crm_boot', {}]; },
+  crmUpdateLead: function (id, ch) { return ['crm_update_lead', { p_id: id, ch: ch }]; },
+  crmUpdateProsp: function (id, ch) { return ['crm_update_prosp', { p_id: id, ch: ch }]; },
+  crmUpdatePV: function (id, ch) { return ['crm_update_pv', { p_id: id, ch: ch }]; },
+  crmAddLead: function (f) { return ['crm_add_lead', { f: f }]; },
+  crmAddProsp: function (f) { return ['crm_add_prosp', { f: f }]; },
+  crmHistory: function (id) { return ['crm_history', { p_id: id }]; }
+};
+function traduzErro(m) {
+  m = String(m || '');
+  if (/JWT|token/i.test(m)) return 'Sua sessão expirou. Recarregue a página e entre de novo.';
+  if (/Failed to fetch|NetworkError|network/i.test(m)) return 'Sem conexão com a internet. Tente de novo.';
+  if (/row-level security/i.test(m)) return 'Você não tem permissão para essa alteração.';
+  if (/leads_um_aberto_por_conta/.test(m)) return 'Esta loja já tem um lead aberto.';
+  return m;
+}
+
+/* ===================== painel (crm.html do Apps Script) ===================== */
+var PENA = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 19.0 58.0"><path fill="currentColor" d="M16.5 0.4 L14.8 1.2 L12.4 3.0 L10.5 4.9 L8.7 7.2 L8.5 7.6 L9.3 9.0 L10.1 9.9 L9.9 10.1 L9.1 10.0 L7.5 9.3 L7.2 9.6 L5.8 12.4 L5.0 14.5 L6.2 16.2 L7.6 17.5 L7.3 17.6 L6.4 17.3 L4.4 16.1 L2.8 21.3 L4.0 23.0 L6.0 24.9 L6.0 25.1 L5.8 25.2 L4.2 24.8 L2.3 23.9 L1.9 25.6 L1.9 26.3 L1.7 26.7 L1.8 26.9 L1.3 29.6 L1.4 29.9 L2.7 31.8 L5.1 34.2 L4.7 34.3 L3.4 33.6 L1.1 31.7 L0.8 34.9 L5.0 39.0 L4.7 39.1 L0.7 37.2 L0.6 37.8 L4.8 40.7 L4.9 40.9 L4.8 41.0 L0.8 39.8 L0.5 39.9 L0.5 40.4 L5.0 42.9 L4.2 43.0 L3.7 42.8 L3.0 42.8 L0.5 42.3 L0.4 42.6 L0.7 43.0 L4.6 44.9 L5.1 45.3 L4.5 45.4 L0.5 44.8 L0.5 45.5 L4.7 47.4 L5.3 47.8 L4.6 47.9 L3.9 47.7 L3.5 47.8 L1.4 47.5 L0.5 47.5 L0.4 47.8 L0.5 48.1 L3.2 49.4 L4.8 49.9 L6.6 50.2 L6.8 51.7 L6.7 51.9 L7.5 57.5 L9.8 57.1 L9.2 53.4 L9.3 53.3 L9.1 52.7 L9.2 52.5 L9.0 51.8 L9.1 51.4 L8.9 50.3 L9.1 50.1 L10.7 49.9 L12.9 49.2 L14.9 48.2 L15.0 47.7 L12.9 47.7 L10.7 47.9 L10.6 47.7 L11.3 47.3 L15.3 45.8 L15.3 45.2 L14.1 45.2 L13.4 45.4 L13.0 45.3 L12.2 45.5 L11.8 45.4 L11.1 45.6 L10.9 45.4 L11.7 44.9 L15.7 43.2 L15.8 42.6 L14.8 42.6 L12.5 43.0 L12.3 42.9 L11.7 43.1 L11.1 43.0 L13.7 41.6 L16.0 40.6 L16.1 39.9 L14.2 40.3 L11.6 41.1 L11.3 41.0 L16.3 38.2 L16.4 37.5 L11.6 39.4 L11.4 39.2 L16.8 34.7 L17.0 32.7 L14.4 34.0 L11.6 34.8 L11.0 34.8 L10.8 34.6 L11.1 34.3 L14.9 32.4 L17.2 30.9 L17.3 30.6 L17.2 30.5 L17.4 29.7 L17.3 29.5 L17.5 28.7 L17.5 27.5 L17.9 24.4 L16.1 25.0 L13.9 25.5 L11.9 25.7 L11.7 25.5 L11.8 25.3 L15.6 23.2 L18.1 21.4 L18.4 16.6 L16.5 17.4 L14.8 17.9 L13.1 18.2 L12.9 18.0 L13.2 17.7 L14.6 17.1 L16.1 16.2 L17.3 15.3 L18.5 14.1 L18.4 10.6 L18.1 10.8 L18.0 10.7 L16.6 11.1 L14.8 11.1 L14.5 10.9 L14.8 10.5 L16.0 9.9 L17.1 9.1 L18.2 8.0 L18.4 7.6 L18.0 4.5 L18.1 4.4 L17.8 3.2 L17.9 3.1 L17.3 0.7 L14.5 6.2 L12.8 10.5 L11.5 14.6 L11.6 14.7 L11.4 15.4 L11.2 15.7 L11.3 15.8 L10.7 17.7 L10.8 17.8 L10.4 19.0 L10.5 19.1 L9.9 21.5 L10.0 21.6 L9.6 23.3 L9.0 27.8 L9.1 28.0 L8.9 28.7 L9.0 28.9 L8.8 29.8 L8.9 30.1 L8.7 31.1 L8.7 33.1 L8.5 34.4 L8.5 43.6 L8.8 46.9 L8.7 47.4 L8.9 48.4 L8.8 48.8 L9.0 50.1 L8.6 50.3 L6.8 50.3 L6.5 49.9 L6.6 49.2 L6.4 47.4 L6.4 38.9 L6.7 35.2 L6.6 34.8 L6.8 33.7 L6.7 33.4 L6.9 32.5 L6.8 32.2 L7.3 28.7 L7.3 27.7 L7.5 27.2 L7.4 27.0 L8.1 22.9 L8.3 22.4 L8.2 22.3 L9.3 17.6 L10.9 12.4 L12.8 7.5 L15.1 2.7Z"/></svg>';
+
+var S = { tab: 'hoje', vend: 'Todos', q: '', closed: false, sheet: null, pmode: 'hoje', pmore: 0 };
+var ST = {}, PST = {}, XST = {}, GANHO = 'Pedido fechado', PERDIDO = 'Perdido';
+var PSK = {};
+
+/* Cores de status na identidade Indião (a planilha continua com as dela) */
+var BRAND_ST = {
+  'Novo': ['#F6E3DC', '#A2452A'], 'Em contato': ['#ECE7E6', '#261915'], 'Qualificado': ['#E8DCD5', '#3A2822'],
+  'Catálogo enviado': ['#DCCAC0', '#261915'], 'Negociação': ['#BD5535', '#FFFFFF'], 'Pedido fechado': ['#2F5D3A', '#FFFFFF'],
+  'Nutrição': ['#E4E8DF', '#3E5530'], 'Perdido': ['#D1C9C9', '#261915'], 'Descartado': ['#F1EEEE', '#7D706B'],
+  'Onboarding': ['#F6E3DC', '#A2452A'], 'Ativo': ['#2F5D3A', '#FFFFFF'], 'Recompra próxima': ['#FBEEDB', '#8A5200'],
+  'Em risco': ['#F8E1DF', '#9B1C1C'], 'Inativo': ['#D1C9C9', '#261915'], 'Encerrado': ['#F1EEEE', '#7D706B']
+};
+var BRAND_PS = { ABORDAR: ['#FFFFFF', '#5F524D'], CADENCIA: ['#ECE7E6', '#261915'], RESPONDEU: ['#F6E3DC', '#A2452A'],
+  SEM_RETORNO: ['#E9DFD9', '#5A463F'], SEM_INTERESSE: ['#D1C9C9', '#261915'], FORA: ['#F1EEEE', '#7D706B'],
+  JA_LEAD: ['#E4E8DF', '#3E5530'], JA_CLIENTE: ['#E4E8DF', '#3E5530'], QUALIFICADO: ['#BD5535', '#FFFFFF'], CLIENTE: ['#2F5D3A', '#FFFFFF'] };
+
+function indexLists() {
+  ST = {}; PST = {}; XST = {}; PSK = {};
+  D.status.forEach(function (s) { var b = BRAND_ST[s.s]; ST[s.s] = { s: s.s, t: s.t, bg: b ? b[0] : s.bg, fg: b ? b[1] : s.fg }; if (s.t === 'Ganho') GANHO = s.s; if (s.t === 'Perdido') PERDIDO = s.s; });
+  D.pvStatus.forEach(function (s) { var b = BRAND_ST[s.s]; PST[s.s] = { s: s.s, bg: b ? b[0] : s.bg, fg: b ? b[1] : s.fg }; });
+  if (D.prosp) {
+    PSK = D.prosp.PS || {};
+    Object.keys(PSK).forEach(function (k) { var b = BRAND_PS[k]; if (b) XST[PSK[k]] = { bg: b[0], fg: b[1] }; });
+    D.prosp.status.forEach(function (s) { if (!XST[s.s]) XST[s.s] = { bg: s.bg, fg: s.fg }; XST[s.s].d = s.d; });
+  }
+}
+indexLists();
+
+/* ---------- utilidades ---------- */
+var ICON = {
+  chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8.5 8.5 0 0 1-12.6 7.4L3 21l1.6-5.2A8.5 8.5 0 1 1 21 12z"/></svg>',
+  phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/></svg>',
+  mail: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>',
+  ig: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor"/></svg>',
+  pin: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>',
+  sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+  cols: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="5" height="16" rx="1.5"/><rect x="10" y="4" width="5" height="11" rx="1.5"/><rect x="17" y="4" width="4" height="7" rx="1.5"/></svg>',
+  target: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/></svg>',
+  chart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
+  users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5a6.5 6.5 0 0 1 3.5 5.5"/></svg>'
+};
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function dU(iso) { var p = iso.split('-'); return Date.UTC(+p[0], +p[1] - 1, +p[2]); }
+function addDays(iso, n) { return new Date(dU(iso) + n * 864e5).toISOString().slice(0, 10); }
+// Cadência conta dias úteis (sem sábado, domingo e feriados nacionais); pausas longas contam corrido e caem num dia útil
+function diaUtil(iso) { var w = new Date(dU(iso)).getUTCDay(), f = (D.prosp && D.prosp.feriados) || []; return w !== 0 && w !== 6 && f.indexOf(iso) < 0 && f.indexOf(iso.slice(5)) < 0; }
+function proxUtil(iso) { while (!diaUtil(iso)) iso = addDays(iso, 1); return iso; }
+function addUteis(iso, n) { var k = 0; while (k < n) { iso = addDays(iso, 1); if (diaUtil(iso)) k++; } return iso; }
+function dataToque(iso, n) { return n >= 30 ? proxUtil(addDays(iso, n)) : addUteis(iso, n); }
+function days(a, b) { return Math.round((dU(b) - dU(a)) / 864e5); }
+function br(iso) { if (!iso) return ''; var p = iso.split('-'); return p[2] + '/' + p[1]; }
+function msIso(ms) { var d = new Date(ms); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+function rel(iso) {
+  if (!iso) return '';
+  var n = days(D.today, iso);
+  if (n === 0) return 'hoje'; if (n === 1) return 'amanhã'; if (n === -1) return 'ontem';
+  if (n > 1 && n < 7) return 'em ' + n + ' dias';
+  if (n < -1) return 'há ' + (-n) + ' dias';
+  return br(iso);
+}
+function money(v) { return v === '' || v == null ? '' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }); }
+function first(n) { return String(n || '').trim().split(/\s+/)[0] || ''; }
+function digits(p) { return String(p || '').replace(/\D/g, ''); }
+function euSou(resp) { var n = String(resp || '').trim() || (D.admin ? '' : D.me); return n; }
+function waUrl(phone, msg) {
+  var d = digits(phone); if (d.length < 10) return '';
+  if (d.length <= 11) d = '55' + d;
+  return 'https://wa.me/' + d + (msg ? '?text=' + encodeURIComponent(msg) : '');
+}
+function waLead(phone, nome, resp) {
+  var eu = euSou(resp);
+  return waUrl(phone, 'Oi' + (first(nome) ? ', ' + first(nome) : '') + '! Tudo bem? ' + (eu ? 'Aqui é ' + eu + ', da Indião Store.' : 'Aqui é da Indião Store.'));
+}
+function mapUrl(nome, cidade, uf) { var q = [nome, cidade, uf].filter(Boolean).join(' '); return q ? 'https://www.google.com/maps/search/' + encodeURIComponent(q) : ''; }
+// Instagram direto no perfil (instagram.com/perfil); sem perfil conhecido, o botão não aparece
+function igFind(insta) { return igUrl(insta); }
+function quick(wa, ig, map, dataAttr) {
+  return '<div class="qa">' + (wa ? '<a class="qb w" href="' + wa + '" target="_blank" rel="noopener" ' + dataAttr + '>' + ICON.chat + '<span>WhatsApp</span></a>' : '') +
+    (ig ? '<a class="qb i" href="' + ig + '" target="_blank" rel="noopener">' + ICON.ig + '<span>Instagram</span></a>' : '') +
+    (map ? '<a class="qb" href="' + map + '" target="_blank" rel="noopener">' + ICON.pin + '<span>Mapa</span></a>' : '') + '</div>';
+}
+function igUrl(h) { h = String(h || '').replace(/^@/, '').trim(); return h ? 'https://instagram.com/' + encodeURIComponent(h) : ''; }
+function pill(st, map) { var s = (map || ST)[st] || { bg: '#F1EEEE', fg: '#5F524D' }; return st ? '<span class="pill" style="background:' + s.bg + ';color:' + s.fg + (s.bg === '#FFFFFF' ? ';border-color:#D1C9C9' : '') + '">' + esc(st) + '</span>' : ''; }
+function sev(a) { return !a ? 9 : a.c === 'red' ? 0 : a.c === 'orange' ? 1 : a.c === 'yellow' ? 2 : 3; }
+function penaSvg(cls) { return PENA.replace('<svg ', '<svg class="pena ' + (cls || '') + '" '); }
+function toast(msg, err) {
+  var t = document.getElementById('toast'); t.textContent = msg; t.className = 'show' + (err ? ' err' : '');
+  clearTimeout(toast.h); toast.h = setTimeout(function () { t.className = ''; }, err ? 5000 : 2800);
+}
+// Antes: google.script.run (CRM.gs). Agora: funções do Supabase com as mesmas regras
+function call(fn) {
+  var args = [].slice.call(arguments, 1), m = RPC[fn].apply(null, args);
+  return sb.rpc(m[0], m[1]).then(function (r) {
+    if (r.error) throw new Error(traduzErro(r.error.message));
+    return r.data;
+  }, function (e) { throw new Error(traduzErro(e && e.message)); });
+}
+
+/* ---------- regras de alerta (iguais às da planilha) ---------- */
+function leadAlert(l) {
+  if (l.tipo !== 'Aberto') return null;
+  if (l.status === 'Novo') {
+    var h = l.entrada ? (Date.now() - l.entrada) / 36e5 : 0;
+    return h > 24 ? { c: 'red', t: 'Sem 1º contato · chegou ' + rel(msIso(l.entrada)) } : { c: 'orange', t: 'Lead novo · responder' };
+  }
+  if (!l.dataAcao) return { c: 'yellow', t: 'Definir próximo passo' };
+  if (l.dataAcao < D.today) return { c: 'red', t: (l.acao || 'Ação') + ' · atrasada (' + rel(l.dataAcao) + ')' };
+  if (l.dataAcao === D.today) return { c: 'orange', t: (l.acao || 'Ação') + ' · hoje' };
+  return { c: '', t: (l.acao || 'Próximo passo') + ' · ' + rel(l.dataAcao) };
+}
+function semCompra(p) { return p.ultPed ? days(p.ultPed, D.today) : null; }
+// Crédito por vendedor (ERP): o valor do mês só vale se a linha foi atualizada neste mês
+function noMes(p, k) { return String(p.atualERP || '').slice(0, 7) === String(D.today).slice(0, 7) ? (Number(p[k]) || 0) : 0; }
+function soma(arr, f) { return arr.reduce(function (s, p) { return s + (f(p) || 0); }, 0); }
+function pvShareNote(p) {
+  if (!p.nPed || !p.total || p.vendTotal === '' || p.vendTotal == null) return '';
+  var v = Number(p.vendTotal) || 0, quem = D.admin ? esc(p.vend) : 'você', m = noMes(p, 'vendMes');
+  var txt = v >= p.total - 0.5 ? 'Todos os pedidos desta loja foram vendidos por ' + quem + ' (' + money(v) + ').'
+    : 'Vendido por ' + quem + ': <b>' + money(v) + '</b> de ' + money(p.total) + '. O resto foi vendido por outra pessoa ou está sem vendedor no Tiny.';
+  return '<div class="note">' + txt + (m ? ' Este mês: ' + money(m) + '.' : '') + '</div>';
+}
+function pvShare(p) {
+  if (!p.nPed || !p.total || p.vendTotal === '' || p.vendTotal == null) return '';
+  var v = Number(p.vendTotal) || 0, q = D.admin ? ' por ' + p.vend : ' seu';
+  if (v >= p.total - 0.5) return 'tudo' + q;
+  return v ? money(v) + q : 'nada' + q;
+}
+function pvAlert(p) {
+  if (p.status === 'Encerrado') return null;
+  var ds = semCompra(p);
+  if (!p.proxFU) return { c: 'yellow', t: 'Agendar follow-up' };
+  if (p.proxFU < D.today) return { c: 'red', t: (p.tipoFU || 'Follow-up') + ' · atrasado (' + rel(p.proxFU) + ')' };
+  if (p.proxFU === D.today) return { c: 'orange', t: (p.tipoFU || 'Follow-up') + ' · hoje' };
+  if (ds > 90) return { c: 'red', t: 'Sem comprar há ' + ds + ' dias' };
+  if (ds > 60) return { c: 'yellow', t: 'Sem comprar há ' + ds + ' dias' };
+  return { c: '', t: (p.tipoFU || 'Follow-up') + ' · ' + rel(p.proxFU) };
+}
+function xAlert(x) {
+  var st = x.status;
+  if (x.proxPasso === 'Retorno solicitado' && x.prox && st !== PSK.QUALIFICADO && st !== PSK.CLIENTE) {
+    if (x.prox < D.today) return { c: 'red', t: 'Retorno combinado · atrasado (' + rel(x.prox) + ')' };
+    if (x.prox === D.today) return { c: 'orange', t: 'Retorno combinado · hoje' };
+    return { c: '', t: 'Retorno combinado · ' + rel(x.prox) + ' (' + br(x.prox) + ')' };
+  }
+  if (st === PSK.RESPONDEU) {
+    var d = x.ultToque ? days(x.ultToque, D.today) : 0;
+    return { c: d > 2 ? 'red' : 'orange', t: 'Qualificar e passar ao ' + (D.prosp.closer || 'closer') + (d > 2 ? ' (respondeu há ' + d + ' dias)' : '') };
+  }
+  if (st === PSK.CADENCIA || st === PSK.SEM_RETORNO) {
+    var passo = x.proxPasso || 'Próximo toque';
+    if (!x.prox) return { c: 'yellow', t: 'Agendar próximo toque' };
+    if (x.prox < D.today) return { c: 'red', t: passo + ' · atrasado (' + rel(x.prox) + ')' };
+    if (x.prox === D.today) return { c: 'orange', t: passo + ' · hoje' };
+    return { c: '', t: passo + ' · ' + rel(x.prox) };
+  }
+  if (st === PSK.ABORDAR || !st) return { c: '', t: 'Nova · começar pelo 1º WhatsApp' };
+  if (st === PSK.QUALIFICADO) return { c: '', t: 'Com o ' + (D.prosp.closer || 'closer') + (x.lead ? ' · ' + x.lead : '') };
+  return null;
+}
+
+/* ---------- playbook e roteiros de mensagem ---------- */
+var PB_TXT = [];
+function copyTxt(t) {
+  var fb = function () {
+    var ta = document.createElement('textarea'); ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); toast('Mensagem copiada ✓'); } catch (e) { toast('Não consegui copiar. Selecione o texto e copie.', true); }
+    document.body.removeChild(ta);
+  };
+  try { navigator.clipboard.writeText(t).then(function () { toast('Mensagem copiada ✓'); }, fb); } catch (e) { fb(); }
+}
+function openPlaybook() {
+  F = { id: 'playbook' }; S.sheet = { type: 'pb' };
+  var x = { resp: D.admin ? '[seu nome]' : D.me, loja: '[nome da loja]', cidade: '[cidade]' };
+  var closer = (D.prosp && D.prosp.closer) || 'closer';
+  var et = (D.prosp && D.prosp.etapas) || [];
+  var prox = function (e) { var r = et.filter(function (z) { return z.e === e; })[0]; return r && r.prox ? ' · depois: ' + r.prox + ' em ' + r.dias + (r.dias === 1 ? ' dia útil' : r.dias < 30 ? ' dias úteis' : ' dias') : ''; };
+  var itens = [
+    ['D0 WhatsApp', 'Primeiro toque, para lojas novas da fila.', 'D0 WhatsApp'],
+    ['D2 WhatsApp', 'Lembrete curto, se a loja não respondeu ao D0.', 'D2 WhatsApp'],
+    ['D4 Instagram', 'Direct no perfil da loja (o botão Instagram abre o perfil).', 'D4 Instagram'],
+    ['D7 Ligação', 'Ligação para o telefone da loja. Peça o decisor.', 'D7 Ligação'],
+    ['D10 WhatsApp', 'Última tentativa, sem insistir.', 'D10 WhatsApp'],
+    ['D14 Encerramento', 'Encerra a cadência com a porta aberta.', 'D14 Encerramento'],
+    ['Reativação', 'Para lojas que não responderam, depois da pausa de 60 dias.', 'Reativação'],
+    ['Retorno combinado', 'Quando a loja pediu para falar numa data.', 'Retorno solicitado'],
+    ['Respondeu → qualificar', 'A loja respondeu com interesse. Colete o que o ' + closer + ' precisa para fechar.', 'qualif'],
+    ['Lead do site (cadastro de lojista)', 'Primeiro contato com quem preencheu o formulário de lojistas.', 'site']
+  ];
+  PB_TXT = itens.map(function (it) { return roteiro(x, it[2]); });
+  var url = D.prosp && D.prosp.playbook;
+  var h = head('Playbook e roteiros', 'Abertura e qualificação de lojistas') + '<div class="pb">' +
+    (url ? '<a class="btn dark" style="display:block;text-align:center;text-decoration:none" href="' + esc(url) + '" target="_blank" rel="noopener">📘 Abrir o playbook completo (PDF)</a>' : '') +
+    '<div class="lbl">Regras do jogo</div><ul style="margin:0;padding-left:18px;font-size:14px;color:var(--brown3);line-height:1.5">' +
+    '<li>Quem abre o contato desperta interesse e qualifica. <b>Catálogo e condições ficam com o ' + esc(closer) + '.</b></li>' +
+    '<li>Só diga o que é verdade: a loja foi encontrada numa busca por lojas country na cidade.</li>' +
+    '<li>Um toque por vez, na ordem da cadência. Depois de cada toque, registre no CRM: o próximo passo é agendado sozinho.</li>' +
+    '<li>Respondeu? Qualifique (decisor, CNPJ, marcas, época de compra) e use "Passar para o ' + esc(closer) + '".</li>' +
+    '<li>Na ficha da loja, o botão WhatsApp já abre com a mensagem da etapa e o nome da loja preenchidos.</li></ul>' +
+    '<div class="lbl">Roteiros <small>troque o que está entre colchetes</small></div>' +
+    itens.map(function (it, i) {
+      return '<div class="rt"><h3>' + esc(it[0]) + '</h3><p class="quando">' + esc(it[1]) + esc(prox(it[2])) + '</p>' +
+        '<div class="script">' + esc(PB_TXT[i]) + '</div><button class="cp" data-act="copy" data-i="' + i + '">Copiar texto</button></div>';
+    }).join('') +
+    '<div class="rt"><h3>Perguntas de qualificação</h3><p class="quando">O que precisa estar preenchido antes de passar ao ' + esc(closer) + '.</p>' +
+    '<ul><li><b>Decisor:</b> quem decide as compras (nome) *</li><li><b>CNPJ</b> da loja *</li><li><b>Marcas</b> que trabalha hoje</li><li><b>Público</b> (feminino, masculino, infantil, peão de rodeio…)</li><li><b>Época de compra</b> (quando costuma fazer pedidos)</li></ul></div>' +
+    '</div>';
+  openSheet(h);
+}
+
+/* ---------- painel do gestor (só o link de gestor vê) ---------- */
+function pct(a, b) { return b ? Math.round(100 * a / b) + '%' : '—'; }
+function nf(v) { return Number(v || 0).toLocaleString('pt-BR'); }
+function barRows(rows, opt) {
+  opt = opt || {};
+  var max = Math.max.apply(null, rows.map(function (r) { return r[1]; }).concat([1]));
+  return '<div class="bars">' + rows.map(function (r) {
+    return '<div class="br" title="' + esc(r[0] + ': ' + r[1] + (r[2] ? ' · ' + r[2] : '')) + '"><span>' + esc(r[0]) + '</span>' +
+      '<div class="pbar' + (opt.ok ? ' ok' : '') + '"><i style="width:' + Math.max(r[1] ? 2 : 0, Math.round(100 * r[1] / max)) + '%"></i></div>' +
+      '<em><b style="color:var(--brown)">' + nf(r[1]) + '</b>' + (r[2] ? ' · ' + esc(r[2]) : '') + '</em></div>';
+  }).join('') + '</div>';
+}
+function viewPainel() {
+  var hoje = D.today, mes = hoje.slice(0, 7), sem7 = addDays(hoje, -6);
+  var L = D.leads, P = D.pv, X = D.prosp ? D.prosp.rows : [];
+  var mesDe = function (ms) { return ms ? msIso(ms).slice(0, 7) === mes : false; };
+  var pessoas = D.sellers.slice();
+  if (L.some(function (l) { return !l.resp && l.tipo === 'Aberto'; })) pessoas.push('');
+
+  // ---- números gerais
+  var abertos = L.filter(function (l) { return l.tipo === 'Aberto'; });
+  var ganhos = L.filter(function (l) { return l.tipo === 'Ganho'; }), perdidos = L.filter(function (l) { return l.tipo === 'Perdido'; });
+  var ganhosMes = ganhos.filter(function (l) { return mesDe(l.mudStatus); });
+  var entradasMes = L.filter(function (l) { return mesDe(l.entrada); });
+  var rec = soma(P, function (p) { return Number(p.total); }), recMes = soma(P, function (p) { return noMes(p, 'mesTotal'); });
+  var sdrs = (D.prosp && D.prosp.sdrs) || [], meta = (D.prosp && D.prosp.meta) || 40;
+  var toquesHoje = X.filter(function (x) { return x.ultToque === hoje; }).length;
+  var vermelhos = L.filter(function (l) { return (leadAlert(l) || {}).c === 'red'; }).length + P.filter(function (p) { return (pvAlert(p) || {}).c === 'red'; }).length +
+    X.filter(function (x) { return (xAlert(x) || {}).c === 'red'; }).length;
+  var kpi = function (v, t, i) { return '<div class="kpi"><b>' + v + '</b><span>' + t + '</span>' + (i ? '<i>' + i + '</i>' : '') + '</div>'; };
+  var out = '<h1>Painel do gestor</h1><div class="date">Visão geral da equipe · ' + new Date(dU(hoje) + 12 * 36e5).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' }) + '</div>' +
+    '<div class="kpis">' +
+    kpi(rec ? money(rec) : '—', 'Receita dos clientes (ERP)', recMes ? money(recMes) + ' este mês' : 'nada este mês ainda') +
+    kpi(nf(abertos.length), 'Leads em aberto', entradasMes.length + ' entraram este mês') +
+    kpi(nf(ganhosMes.length), 'Pedidos fechados no mês', 'conversão geral ' + pct(ganhos.length, ganhos.length + perdidos.length)) +
+    kpi(nf(toquesHoje), 'Toques de prospecção hoje', 'meta da equipe ' + nf(meta * sdrs.length)) +
+    '</div>';
+
+  // ---- precisa de atenção
+  var att = [];
+  L.forEach(function (l) { var a = leadAlert(l); if (a && a.c === 'red') att.push({ o: 0, k: 'Lead', id: 'data-lead="' + esc(l.id) + '"', n: l.loja || l.nome, q: l.resp || 'sem responsável', t: a.t }); });
+  X.forEach(function (x) { var a = xAlert(x); if (x.status === PSK.RESPONDEU && a && a.c === 'red') att.push({ o: 1, k: 'Prospecção', id: 'data-x="' + esc(x.id) + '"', n: x.loja, q: x.resp || '—', t: a.t }); });
+  P.forEach(function (p) { var a = pvAlert(p); if (a && a.c === 'red') att.push({ o: 2, k: 'Cliente', id: 'data-pv="' + esc(p.id) + '"', n: p.cliente, q: p.vend, t: a.t }); });
+  att.sort(function (a, b) { return a.o - b.o; });
+
+  // ---- equipe (vendas)
+  var eq = pessoas.map(function (s) {
+    var mineL = L.filter(function (l) { return (l.resp || '') === s; }), mineP = P.filter(function (p) { return p.vend === s; });
+    var g = mineL.filter(function (l) { return l.tipo === 'Ganho'; }).length, pe = mineL.filter(function (l) { return l.tipo === 'Perdido'; }).length;
+    return {
+      s: s || 'Sem responsável',
+      ab: mineL.filter(function (l) { return l.tipo === 'Aberto'; }).length,
+      novo: mineL.filter(function (l) { return (leadAlert(l) || {}).t && l.status === 'Novo' && (leadAlert(l) || {}).c === 'red'; }).length,
+      atr: mineL.filter(function (l) { return l.tipo === 'Aberto' && l.dataAcao && l.dataAcao < hoje; }).length,
+      pot: soma(mineL.filter(function (l) { return l.tipo === 'Aberto'; }), function (l) { return Number(l.potencial); }),
+      gm: mineL.filter(function (l) { return l.tipo === 'Ganho' && mesDe(l.mudStatus); }).length,
+      g: g, conv: pct(g, g + pe),
+      vend: soma(mineP, function (p) { return Number(p.vendTotal); }), vendMes: soma(mineP, function (p) { return noMes(p, 'vendMes'); }),
+      cli: mineP.filter(function (p) { return p.status !== 'Encerrado'; }).length,
+      cliA: mineP.filter(function (p) { return (pvAlert(p) || {}).c === 'red'; }).length
+    };
+  });
+  var tot = function (k) { return soma(eq, function (r) { return r[k]; }); };
+  var td = function (v, bad) { return '<td' + (bad && v ? ' class="bad"' : !v ? ' class="mu"' : '') + '>' + v + '</td>'; };
+  var tEq = '<div class="tw"><table class="pt"><thead><tr><th>Vendedor</th><th>Leads abertos</th><th>Novos parados +24h</th><th>Ações atrasadas</th><th>Potencial aberto</th><th>Fechados no mês</th><th>Conversão</th><th>Vendido (ERP)</th><th>Vendido no mês</th><th>Clientes ativos</th><th>Clientes em alerta</th></tr></thead><tbody>' +
+    eq.map(function (r) { return '<tr><td>' + esc(r.s) + '</td>' + td(r.ab) + td(r.novo, 1) + td(r.atr, 1) + td(r.pot ? money(r.pot) : 0) + td(r.gm) + '<td>' + r.conv + '</td>' + td(r.vend ? money(r.vend) : 0) + td(r.vendMes ? money(r.vendMes) : 0) + td(r.cli) + td(r.cliA, 1) + '</tr>'; }).join('') +
+    '<tr class="tot"><td>Equipe</td><td>' + tot('ab') + '</td><td>' + tot('novo') + '</td><td>' + tot('atr') + '</td><td>' + (tot('pot') ? money(tot('pot')) : '—') + '</td><td>' + tot('gm') + '</td><td>' + pct(ganhos.length, ganhos.length + perdidos.length) + '</td><td>' + money(tot('vend')) + '</td><td>' + money(tot('vendMes')) + '</td><td>' + tot('cli') + '</td><td>' + tot('cliA') + '</td></tr>' +
+    '</tbody></table></div>';
+
+  // ---- placar da prospecção
+  var tPl = '';
+  if (D.prosp) {
+    var pl = sdrs.map(function (s) {
+      var m = X.filter(function (x) { return x.resp === s; });
+      var c = function (st) { return m.filter(function (x) { return x.status === st; }).length; };
+      var ab = m.length - c(PSK.ABORDAR) - c(PSK.FORA) - c(PSK.JA_LEAD);
+      var resp = c(PSK.RESPONDEU) + c(PSK.QUALIFICADO) + c(PSK.CLIENTE), qual = c(PSK.QUALIFICADO) + c(PSK.CLIENTE);
+      return {
+        s: s, hoje: m.filter(function (x) { return x.ultToque === hoje; }).length,
+        sem: m.filter(function (x) { return x.ultToque && x.ultToque >= sem7; }).length,
+        agir: m.filter(function (x) { var a = xAlert(x); return a && (a.c === 'red' || a.c === 'orange'); }).length,
+        fila: c(PSK.ABORDAR), ab: ab, resp: resp, qual: qual, cli: c(PSK.CLIENTE)
+      };
+    });
+    var ptot = function (k) { return soma(pl, function (r) { return r[k]; }); };
+    var metaCell = function (v, m) { return '<td><span class="mtr"><span class="pbar ok" style="display:block"><i style="width:' + Math.min(100, Math.round(100 * v / (m || 1))) + '%"></i></span>' + v + '/' + m + '</span></td>'; };
+    tPl = '<div class="tw"><table class="pt"><thead><tr><th>SDR</th><th>Toques hoje</th><th>Lojas tocadas 7 dias</th><th>Para agir hoje</th><th>Fila nova</th><th>Abordadas</th><th>Responderam</th><th>Qualificadas → ' + esc(D.prosp.closer || 'closer') + '</th><th>Viraram cliente</th><th>Taxa de resposta</th><th>Taxa de qualificação</th></tr></thead><tbody>' +
+      pl.map(function (r) { return '<tr><td>' + esc(r.s) + '</td>' + metaCell(r.hoje, meta) + td(r.sem) + td(r.agir, 1) + td(r.fila) + td(r.ab) + td(r.resp) + td(r.qual) + td(r.cli) + '<td>' + pct(r.resp, r.ab) + '</td><td>' + pct(r.qual, r.resp) + '</td></tr>'; }).join('') +
+      '<tr class="tot"><td>Equipe</td>' + metaCell(ptot('hoje'), meta * pl.length) + '<td>' + ptot('sem') + '</td><td>' + ptot('agir') + '</td><td>' + ptot('fila') + '</td><td>' + ptot('ab') + '</td><td>' + ptot('resp') + '</td><td>' + ptot('qual') + '</td><td>' + ptot('cli') + '</td><td>' + pct(ptot('resp'), ptot('ab')) + '</td><td>' + pct(ptot('qual'), ptot('resp')) + '</td></tr>' +
+      '</tbody></table></div>';
+  }
+
+  // ---- funil, origem, perdas, entradas, pós-venda
+  var porStatus = D.status.map(function (st) { return [st.s, L.filter(function (l) { return l.status === st.s; }).length, st.t === 'Aberto' ? '' : st.t.toLowerCase()]; }).filter(function (r) { return r[1]; });
+  var orig = {};
+  L.forEach(function (l) { var o = l.origem || 'Sem origem'; orig[o] = orig[o] || [0, 0, 0]; orig[o][0]++; if (l.tipo === 'Ganho') orig[o][1]++; if (l.tipo === 'Perdido') orig[o][2]++; });
+  var porOrig = Object.keys(orig).sort(function (a, b) { return orig[b][0] - orig[a][0]; }).map(function (o) { return [o, orig[o][0], orig[o][1] + ' fechado' + (orig[o][1] === 1 ? '' : 's') + ' (' + pct(orig[o][1], orig[o][1] + orig[o][2]) + ')']; });
+  var mot = {};
+  perdidos.forEach(function (l) { var m = l.motivo || 'Sem motivo informado'; mot[m] = (mot[m] || 0) + 1; });
+  var porMot = Object.keys(mot).sort(function (a, b) { return mot[b] - mot[a]; }).map(function (m) { return [m, mot[m], pct(mot[m], perdidos.length)]; });
+  var seg = addDays(hoje, -((new Date(dU(hoje)).getUTCDay() + 6) % 7)), semanas = [];
+  for (var i = 7; i >= 0; i--) {
+    var ini = addDays(seg, -7 * i), fim = addDays(ini, 7);
+    semanas.push([ini, L.filter(function (l) { var d = l.entrada ? msIso(l.entrada) : ''; return d >= ini && d < fim; }).length]);
+  }
+  var smax = Math.max.apply(null, semanas.map(function (w) { return w[1]; }).concat([1]));
+  var vb = '<div class="vbars">' + semanas.map(function (w) { return '<div class="vb" title="' + esc('Semana de ' + br(w[0]) + ': ' + w[1] + ' leads') + '"><b>' + w[1] + '</b><i style="height:' + Math.round(96 * w[1] / smax) + 'px"></i><small>' + br(w[0]) + '</small></div>'; }).join('') + '</div>';
+  var porPV = D.pvStatus.map(function (st) { return [st.s, P.filter(function (p) { return p.status === st.s; }).length]; }).filter(function (r) { return r[1]; });
+  var nPed = soma(P, function (p) { return Number(p.nPed); });
+  var fuAtr = P.filter(function (p) { return p.status !== 'Encerrado' && p.proxFU && p.proxFU < hoje; }).length;
+  var sem60 = P.filter(function (p) { var d = semCompra(p); return p.status !== 'Encerrado' && d != null && d > 60; }).length;
+  var outros = rec - soma(P, function (p) { return Number(p.vendTotal); });
+
+  out += '<div class="links" style="margin:-6px 0 14px"><button data-act="acessos">👥 Acessos ao CRM</button><button data-act="expL">⬇️ Leads (CSV)</button><button data-act="expX">⬇️ Prospecção (CSV)</button><button data-act="expPV">⬇️ Pós-venda (CSV)</button></div>';
+  out += '<div class="pn">' +
+    '<section class="pc full"><div class="lbl">Precisa de atenção agora <span class="n" style="color:var(--late)">' + att.length + '</span></div>' +
+    '<p class="hint">Leads novos sem resposta há mais de 24h, ações atrasadas, lojas que responderam e ainda não foram qualificadas e clientes com follow-up atrasado. Toque para abrir.</p>' +
+    (att.length ? '<div class="att">' + att.slice(0, 12).map(function (a) { return '<a ' + a.id + '><span class="k">' + a.k + '</span><b>' + esc(a.n) + ' · ' + esc(a.q) + '</b><small>' + esc(a.t) + '</small></a>'; }).join('') + '</div>' +
+      (att.length > 12 ? '<p class="hint" style="margin:8px 0 0">+ ' + (att.length - 12) + ' itens. Use o filtro de vendedor nas abas para ver todos.</p>' : '') : '<p class="hint" style="margin:0">Nada atrasado. 👏</p>') + '</section>' +
+    '<section class="pc full"><div class="lbl">Equipe · vendas e carteira</div><p class="hint">Vendido = pedidos no Olist Tiny com o vendedor no pedido. Conversão = fechados ÷ (fechados + perdidos).</p>' + tEq + '</section>' +
+    (tPl ? '<section class="pc full"><div class="lbl">Placar da prospecção</div><p class="hint">Meta de ' + meta + ' toques por dia por pessoa. "Lojas tocadas" conta cada loja uma vez pelo último toque.</p>' + tPl + '</section>' : '') +
+    '<section class="pc"><div class="lbl">Funil por status</div><p class="hint">Todos os leads do CRM.</p>' + barRows(porStatus) + '</section>' +
+    '<section class="pc"><div class="lbl">Entradas por semana</div><p class="hint">Leads novos nas últimas 8 semanas (semana começa na segunda).</p>' + vb + '</section>' +
+    '<section class="pc"><div class="lbl">Origem dos leads</div><p class="hint">Quantos entraram por canal e quantos fecharam.</p>' + barRows(porOrig) + '</section>' +
+    '<section class="pc"><div class="lbl">Motivos de perda</div><p class="hint">' + perdidos.length + ' leads perdidos.</p>' + (porMot.length ? barRows(porMot) : '<p class="hint">Nenhum lead perdido.</p>') + '</section>' +
+    '<section class="pc full"><div class="lbl">Pós-venda</div>' +
+    '<div class="kpis" style="margin:6px 0 14px">' + kpi(nf(P.length), 'Clientes na carteira', P.filter(function (p) { return p.status !== 'Encerrado'; }).length + ' ativos ou em acompanhamento') +
+    kpi(nPed ? money(rec / nPed) : '—', 'Ticket médio por pedido', nf(nPed) + ' pedidos no ERP') + kpi(nf(fuAtr), 'Follow-ups atrasados', '') + kpi(nf(sem60), 'Sem comprar há +60 dias', '') + '</div>' +
+    barRows(porPV) +
+    (outros > 0.5 ? '<p class="hint" style="margin:10px 0 0">' + money(outros) + ' da receita dos clientes foi vendida por outras pessoas ou está sem vendedor no Tiny.</p>' : '') + '</section>' +
+    '</div>';
+  return out;
+}
+
+/* ---------- filtros ---------- */
+function mine(resp) { return S.vend === 'Todos' || !resp || resp === S.vend; }
+function leads() { return D.leads.filter(function (l) { return mine(l.resp); }); }
+function pvs() { return D.pv.filter(function (p) { return S.vend === 'Todos' || p.vend === S.vend; }); }
+function xs() { return D.prosp ? D.prosp.rows.filter(function (x) { return mine(x.resp); }) : []; }
+function hasProsp() { return !!(D.prosp && (D.admin || D.prosp.rows.length)); }
+function match(o, fields) {
+  if (!S.q) return true;
+  var q = S.q.toLowerCase();
+  return fields.some(function (k) { return String(o[k] || '').toLowerCase().indexOf(q) >= 0; }) || (digits(S.q).length >= 4 && digits(o.whats).indexOf(digits(S.q)) >= 0);
+}
+
+/* ---------- cartões ---------- */
+function leadCard(l, compact) {
+  var a = leadAlert(l);
+  var sub = [l.loja, [l.cidade, l.uf].filter(Boolean).join('/')].filter(Boolean).join(' · ');
+  var wa = waLead(l.whats, l.nome, l.resp);
+  var line = a ? '<div class="cn ' + (a.c ? 't-' + a.c : 't-muted') + '">' + esc(a.t) + '</div>'
+    : l.tipo === 'Ganho' ? '<div class="cn t-muted">' + (l.pedido ? '1º pedido ' + money(l.pedido) : 'Cliente') + (l.mudStatus ? ' · ' + br(msIso(l.mudStatus)) : '') + '</div>'
+    : l.motivo ? '<div class="cn t-muted">' + esc(l.motivo) + '</div>' : '';
+  return '<article class="card ' + (a && a.c ? 'c-' + a.c : '') + '" data-lead="' + esc(l.id) + '"' + (compact ? ' draggable="true"' : '') + '>' +
+    '<div class="cm"><div class="ct">' + (l.temp ? '<span class="temp ' + esc(l.temp) + '" title="' + esc(l.temp) + '"></span>' : '') +
+    '<b>' + esc(l.nome || l.loja || l.id) + '</b>' + (compact ? '' : pill(l.status)) + '</div>' +
+    (sub ? '<div class="cs">' + esc(sub) + (S.vend === 'Todos' && l.resp && !compact ? ' · ' + esc(l.resp) : '') + '</div>' : '') + line +
+    (compact ? '' : quick(wa, igFind(l.insta, l.loja || l.nome, l.cidade), mapUrl(l.loja || l.nome, l.cidade, l.uf), 'data-wa="' + esc(l.id) + '"')) + '</div>' +
+    '</article>';
+}
+function pvCard(p) {
+  var a = pvAlert(p), ds = semCompra(p);
+  var wa = waLead(p.whats, p.contato, p.vend);
+  var sh = pvShare(p);
+  var buy = p.nPed ? p.nPed + (p.nPed > 1 ? ' pedidos' : ' pedido') + ' · ' + money(p.total) + (sh ? ' (' + sh + ')' : '') + (ds != null ? ' · último há ' + ds + 'd' : '') : 'Sem pedido no ERP ainda';
+  return '<article class="card ' + (a && a.c ? 'c-' + a.c : '') + '" data-pv="' + esc(p.id) + '">' +
+    '<div class="cm"><div class="ct"><b>' + esc(p.cliente || p.contato) + '</b>' + pill(p.status, PST) + '</div>' +
+    '<div class="cs">' + esc([p.contato, p.cidade].filter(Boolean).join(' · ')) + (S.vend === 'Todos' ? ' · ' + esc(p.vend) : '') + '</div>' +
+    '<div class="cn t-muted">' + esc(buy) + '</div>' +
+    (a ? '<div class="cn ' + (a.c ? 't-' + a.c : 't-muted') + '">' + esc(a.t) + '</div>' : '') +
+    quick(wa, igFind(p.insta, p.cliente, String(p.cidade || '').split('/')[0]), mapUrl(p.cliente, p.cidade, ''), 'data-wapv="' + esc(p.id) + '"') + '</div>' +
+    '</article>';
+}
+/* canal do próximo toque da cadência */
+function canal(passo) { var s = String(passo || ''); return /insta/i.test(s) ? 'ig' : /liga/i.test(s) ? 'tel' : 'wa'; }
+function etapaSugerida(x) {
+  if (x.status === PSK.ABORDAR || !x.status || !x.etapa) return (D.prosp.etapas[0] || {}).e || 'D0 WhatsApp';
+  if (x.proxPasso && D.prosp.etapas.some(function (e) { return e.e === x.proxPasso; })) return x.proxPasso;
+  return '';
+}
+function roteiro(x, etapa) {
+  // Quem abre o contato desperta interesse e qualifica; catálogo e condições ficam com o closer
+  var nome = euSou(x.resp), eu = nome ? 'Aqui é ' + nome + ', da Indião Store' : 'Aqui é da Indião Store';
+  // Só afirmações verdadeiras: a loja foi encontrada numa busca online por lojas country na cidade
+  var loja = x.loja || 'sua loja';
+  var cidade = String(x.cidade || '').split('/')[0].trim();
+  var onde = cidade ? ' em ' + cidade : '';
+  var achei = 'Estou procurando lojas country' + onde + ' para o nosso programa de lojistas parceiros e encontrei a ' + (x.loja || 'loja de vocês') + '.';
+  var e = String(etapa || '');
+  if (/^D0/.test(e)) return 'Oi, tudo bem? ' + eu + ', marca de moda country. ' + achei + ' Acho que a Indião tem tudo a ver com o público de vocês. Vocês trabalham com marcas country na loja?';
+  if (/^D2/.test(e)) return 'Oi! Passando para saber se você viu minha mensagem. Se fizer sentido, te conto rapidinho como funciona a parceria da Indião para lojistas.';
+  if (/insta/i.test(e)) return 'Oi! ' + eu + ', marca de moda country. Estou procurando lojas country' + onde + ' para o nosso programa de lojistas parceiros e encontrei o perfil de vocês. Acho que a Indião combina com o público da loja. Posso te contar como funciona a parceria?';
+  if (/liga/i.test(e)) return 'Oi, tudo bem? ' + eu + ', marca de moda country. Falo com quem cuida das compras da ' + loja + '? (Se não for a pessoa: qual o nome de quem decide e o melhor horário para falar?) Estou procurando lojas country' + onde + ' para o nosso programa de lojistas parceiros e encontrei vocês. Vocês trabalham com marcas country? Posso pedir para o nosso consultor comercial te mandar o catálogo e as condições pelo WhatsApp? Qual o melhor número?';
+  if (/qualif/i.test(e)) return 'Que bom! Para eu já deixar tudo certo com o nosso consultor comercial: quem decide as compras aí na loja? Vocês têm CNPJ? Quais marcas trabalham hoje e em que época costumam fazer os pedidos?';
+  if (/site|inbound/i.test(e)) return 'Oi, tudo bem? ' + eu + '. Recebi seu cadastro no programa de lojistas parceiros da Indião. Para eu te passar as condições certinhas: qual o nome da loja e a cidade? Vocês já trabalham com moda country?';
+  if (/^D10/.test(e)) return 'Oi! Última mensagem por aqui para não incomodar. Se em algum momento fizer sentido para a ' + loja + ' conhecer a Indião para revenda, é só me chamar.';
+  if (/^D14|encerr/i.test(e)) return 'Oi! Vou encerrar o contato por aqui. Quando quiser conhecer a parceria de lojistas da Indião Store, é só me chamar. Abraço!';
+  if (/reativ/i.test(e)) return 'Oi, tudo bem? ' + eu + '. Entrei em contato um tempo atrás sobre o programa de lojistas parceiros da Indião. Queria saber se agora faz sentido para a ' + loja + ' conhecer a marca.';
+  if (/retorno/i.test(e)) return 'Oi, tudo bem? ' + eu + '. Combinamos de falar hoje. Podemos seguir com a conversa sobre a parceria da Indião para a ' + loja + '?';
+  return 'Oi! ' + eu + '.';
+}
+function xGo(x) {
+  var et = etapaSugerida(x) || x.proxPasso, c = canal(et);
+  if (x.status === PSK.RESPONDEU) c = 'wa';
+  if (c === 'ig' && x.insta) return '<a class="go ig" href="' + igUrl(x.insta) + '" target="_blank" rel="noopener" data-wax="' + esc(x.id) + '" aria-label="Instagram">' + ICON.ig + '<span>Instagram</span></a>';
+  if (c === 'tel' && digits(x.whats).length >= 10) return '<a class="go tel" href="tel:+55' + digits(x.whats) + '" data-wax="' + esc(x.id) + '" aria-label="Ligar">' + ICON.phone + '<span>Ligar</span></a>';
+  var wa = waUrl(x.whats, x.status === PSK.RESPONDEU ? '' : roteiro(x, et));
+  return wa ? '<a class="go" href="' + wa + '" target="_blank" rel="noopener" data-wax="' + esc(x.id) + '" aria-label="WhatsApp">' + ICON.chat + '<span>WhatsApp</span></a>' : '';
+}
+function xCard(x) {
+  var a = xAlert(x);
+  var sub = [[x.cidade, x.uf].filter(Boolean).join('/'), x.segmento].filter(Boolean).join(' · ');
+  return '<article class="card ' + (a && a.c ? 'c-' + a.c : '') + '" data-x="' + esc(x.id) + '">' +
+    '<div class="cm"><div class="ct">' + (x.tier && x.tier.length <= 2 ? '<span class="tier ' + esc(x.tier) + '">' + esc(x.tier) + '</span>' : '') +
+    '<b>' + esc(x.loja) + '</b>' + (x.status !== PSK.ABORDAR && x.status !== PSK.CADENCIA ? pill(x.status, XST) : '') + '</div>' +
+    '<div class="cs">' + esc(sub) + (S.vend === 'Todos' && x.resp ? ' · ' + esc(x.resp) : '') + '</div>' +
+    (a ? '<div class="cn ' + (a.c ? 't-' + a.c : 't-muted') + '">' + esc(a.t) + '</div>' : '') + '</div>' + xGo(x) + '</article>';
+}
+function section(title, hint, items, fn, two, limit) {
+  if (!items.length) return '';
+  var shown = limit ? items.slice(0, limit) : items;
+  return '<section class="sec"><h2>' + title + ' <span class="n">' + items.length + '</span></h2>' + (hint ? '<p class="hint">' + hint + '</p>' : '') +
+    '<div class="list' + (two ? ' two' : '') + '">' + shown.map(function (x) { return fn(x); }).join('') + '</div>' +
+    (limit && items.length > limit ? '<div style="margin-top:8px"><button class="more" data-act="more">Ver mais ' + Math.min(20, items.length - limit) + '</button></div>' : '') + '</section>';
+}
+
+/* ---------- telas ---------- */
+function todayBuckets() {
+  var L = leads().filter(function (l) { return l.tipo === 'Aberto'; });
+  var by = function (k) { return function (a, b) { return String(a[k]).localeCompare(String(b[k])); }; };
+  var b = {
+    novos: L.filter(function (l) { return l.status === 'Novo'; }).sort(function (a, b) { return (a.entrada || 0) - (b.entrada || 0); }),
+    atras: L.filter(function (l) { return l.status !== 'Novo' && l.dataAcao && l.dataAcao < D.today; }).sort(by('dataAcao')),
+    hoje: L.filter(function (l) { return l.status !== 'Novo' && l.dataAcao === D.today; }),
+    semPasso: L.filter(function (l) { return l.status !== 'Novo' && !l.dataAcao; }),
+    pv: pvs().filter(function (p) { var a = pvAlert(p); return a && a.c; }).sort(function (a, b) { return sev(pvAlert(a)) - sev(pvAlert(b)) || String(a.proxFU).localeCompare(String(b.proxFU)); }),
+    abertos: L
+  };
+  b.total = b.novos.length + b.atras.length + b.hoje.length + b.pv.filter(function (p) { return sev(pvAlert(p)) < 2; }).length;
+  return b;
+}
+function prospBuckets() {
+  var X = xs(), r = { qualif: [], atras: [], hoje: [], reativar: [], semData: [], novas: [], cad: [], ret: [], agenda: [], feitos: 0, resp: 0, quali: 0 };
+  X.forEach(function (x) {
+    if (x.ultToque === D.today) r.feitos++;
+    var fechado = x.status === PSK.QUALIFICADO || x.status === PSK.CLIENTE || x.status === PSK.SEM_INTERESSE || x.status === PSK.FORA || x.status === PSK.JA_LEAD || x.status === PSK.JA_CLIENTE;
+    if (x.prox && !fechado) r.agenda.push(x);
+    if (x.proxPasso === 'Retorno solicitado' && x.prox && !fechado) {
+      if (x.status === PSK.RESPONDEU) r.resp++;
+      if (x.prox <= D.today) r.ret.push(x);
+      return;
+    }
+    if (x.status === PSK.RESPONDEU) { r.qualif.push(x); r.resp++; return; }
+    if (x.status === PSK.QUALIFICADO) r.quali++;
+    if (x.status === PSK.ABORDAR || !x.status) { r.novas.push(x); return; }
+    if (x.status === PSK.CADENCIA || x.status === PSK.SEM_RETORNO) {
+      if (!x.prox) r.semData.push(x);
+      else if (x.prox < D.today) (x.status === PSK.SEM_RETORNO ? r.reativar : r.atras).push(x);
+      else if (x.prox === D.today) (x.status === PSK.SEM_RETORNO ? r.reativar : r.hoje).push(x);
+      else if (x.status === PSK.CADENCIA) r.cad.push(x);
+    }
+  });
+  var byProx = function (a, b) { return String(a.prox).localeCompare(String(b.prox)); };
+  var tierN = function (t) { return { A: 0, B: 1, C: 2 }[t] != null ? { A: 0, B: 1, C: 2 }[t] : 3; };
+  r.atras.sort(byProx); r.reativar.sort(byProx); r.cad.sort(byProx); r.ret.sort(byProx); r.agenda.sort(byProx);
+  r.novas.sort(function (a, b) { return tierN(a.tier) - tierN(b.tier) || (Number(b.score) || 0) - (Number(a.score) || 0); });
+  r.agir = r.qualif.length + r.ret.length + r.atras.length + r.hoje.length + r.reativar.length;
+  return r;
+}
+function viewHoje() {
+  var b = todayBuckets();
+  var h = new Date().getHours();
+  var oi = h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite';
+  var nome = S.vend === 'Todos' ? '' : ', ' + S.vend;
+  var mes = D.today.slice(0, 7);
+  var ganhos = leads().filter(function (l) { return l.tipo === 'Ganho' && l.mudStatus && msIso(l.mudStatus).slice(0, 7) === mes; });
+  var pot = b.abertos.reduce(function (s, l) { return s + (Number(l.potencial) || 0); }, 0);
+  var dt = new Date(dU(D.today) + 12 * 36e5).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
+  dt = dt.charAt(0).toUpperCase() + dt.slice(1);
+  var pb = hasProsp() ? prospBuckets() : null;
+  var out = '<h1>' + oi + nome + '</h1><div class="date">' + dt + '</div>' + '<button class="pbk" data-act="playbook">📘 Playbook e roteiros de mensagem</button>' +
+    '<div class="hero">' + penaSvg() + '<div class="row"><div><b>' + (b.total + (pb ? pb.agir : 0)) + '</b><span>Para fazer hoje</span></div>' +
+    (pb ? '<div class="mini"><b>' + pb.feitos + '/' + D.prosp.meta + '</b><span>Toques de prospecção</span></div>' : '') + '</div>' +
+    (pb ? '<div class="prog"><i style="width:' + Math.min(100, Math.round(pb.feitos / (D.prosp.meta || 1) * 100)) + '%"></i></div>' : '') + '</div>' +
+    '<div class="kpis">' +
+    '<div class="kpi"><b>' + b.abertos.length + '</b><span>Leads em aberto</span></div>' +
+    '<div class="kpi"><b>' + (pot ? money(pot) : '—') + '</b><span>Potencial em aberto</span></div>' +
+    '<div class="kpi"><b>' + ganhos.length + '</b><span>Fechados no mês</span></div>' +
+    '<div class="kpi"><b>' + pvs().length + '</b><span>Clientes na carteira</span></div></div>';
+  var prospSec = '';
+  if (pb && (pb.agir || pb.novas.length)) {
+    prospSec = '<section class="sec"><h2>Prospecção <span class="n">' + pb.agir + '</span></h2>' +
+      '<p class="hint">' + [pb.ret.length ? pb.ret.length + ' retornos combinados' : '', pb.qualif.length ? pb.qualif.length + ' para qualificar' : '', (pb.atras.length + pb.hoje.length) ? (pb.atras.length + pb.hoje.length) + ' toques para hoje' : '', pb.reativar.length ? pb.reativar.length + ' para reativar' : '', pb.novas.length ? pb.novas.length + ' lojas novas na fila' : ''].filter(Boolean).join(' · ') + '</p>' +
+      '<div class="list two">' + pb.ret.concat(pb.qualif, pb.atras, pb.hoje).slice(0, 4).map(xCard).join('') + '</div>' +
+      '<div style="margin-top:8px"><button class="btn dark" style="width:100%" data-tab="prosp">Abrir minha prospecção</button></div></section>';
+  }
+  var body =
+    section('Responder agora', 'Leads novos. Quanto antes o primeiro contato, maior a chance de fechar.', b.novos, leadCard, true) +
+    section('Atrasados', '', b.atras, leadCard, true) +
+    section('Para hoje', '', b.hoje, leadCard, true) +
+    prospSec +
+    section('Pós-venda', 'Clientes com follow-up para fazer.', b.pv, pvCard, true) +
+    section('Sem próximo passo', 'Abra e marque quando falar de novo.', b.semPasso, leadCard, true);
+  if (!body) body = '<div class="empty">' + penaSvg() + '<p><b>Tudo em dia.</b><br>Nenhuma pendência para hoje.</p><button class="btn" data-tab="funil">Ver o funil</button></div>';
+  return out + body;
+}
+function viewFunil() {
+  var cols = D.status.filter(function (s) { return s.t === 'Aberto'; }).map(function (s) { return s.s; });
+  cols.push(GANHO);
+  if (S.closed) D.status.forEach(function (s) { if (s.t !== 'Aberto' && s.t !== 'Ganho') cols.push(s.s); });
+  var L = leads().filter(function (l) { return match(l, ['nome', 'loja', 'cidade', 'email', 'id']); });
+  var out = '<h1>Funil</h1><div class="bar"><input class="search" id="q" placeholder="Buscar nome, loja, cidade ou WhatsApp" value="' + esc(S.q) + '">' +
+    '<button class="chip' + (S.closed ? ' on' : '') + '" data-act="closed">Perdidos e descartados</button></div><div class="board">';
+  cols.forEach(function (c) {
+    var items = L.filter(function (l) { return l.status === c; }).sort(function (a, b) { return sev(leadAlert(a)) - sev(leadAlert(b)) || String(a.dataAcao || '9').localeCompare(String(b.dataAcao || '9')); });
+    var sum = items.reduce(function (s, l) { return s + (Number(c === GANHO ? l.pedido : l.potencial) || 0); }, 0);
+    out += '<section class="col" data-drop="' + esc(c) + '"><header>' + pill(c) + '<span class="cnt">' + items.length + '</span>' +
+      (sum ? '<span class="sum">' + money(sum) + '</span>' : '') + '</header><div class="list">' +
+      (items.length ? items.map(function (l) { return leadCard(l, true); }).join('') : '<div class="none">Nenhum lead</div>') + '</div></section>';
+  });
+  return out + '</div><p class="note">Deslize para o lado para ver as etapas. No computador, arraste o cartão para mudar de etapa.</p>';
+}
+function viewProsp() {
+  if (!D.prosp) return '<div class="empty">' + penaSvg() + '<p>A aba Prospecção não foi encontrada na planilha.</p></div>';
+  var pb = prospBuckets(), X = xs();
+  var modes = [['hoje', 'Para hoje', pb.agir], ['agenda', 'Agenda', pb.agenda.length], ['novas', 'Lojas novas', pb.novas.length], ['todas', 'Todas', X.length]];
+  var out = '<h1>Prospecção</h1><div class="date">Abertura e qualificação de lojistas · fechamento com o ' + esc(D.prosp.closer || 'closer') + '</div>' +
+    '<button class="pbk" data-act="playbook">📘 Playbook e roteiros de mensagem</button> <button class="pbk" data-act="newx">＋ Nova loja para prospectar</button>' +
+    '<div class="hero">' + penaSvg() + '<div class="row"><div><b>' + pb.feitos + '<small style="font-size:22px;color:var(--gray)">/' + D.prosp.meta + '</small></b><span>Toques hoje</span></div>' +
+    '<div class="mini"><b>' + pb.agir + '</b><span>Para agir</span></div><div class="mini"><b>' + pb.resp + '</b><span>Responderam</span></div><div class="mini"><b>' + pb.quali + '</b><span>Com o ' + esc(D.prosp.closer || 'closer') + '</span></div></div>' +
+    '<div class="prog"><i style="width:' + Math.min(100, Math.round(pb.feitos / (D.prosp.meta || 1) * 100)) + '%"></i></div></div>' +
+    '<div class="seg">' + modes.map(function (m) { return '<button data-pmode="' + m[0] + '" class="' + (S.pmode === m[0] ? 'on' : '') + '">' + m[1] + '<span class="c">' + m[2] + '</span></button>'; }).join('') + '</div>';
+  out += '<div class="bar"><input class="search" id="q" type="search" enterkeyhint="search" placeholder="🔎 Buscar loja pelo nome, cidade ou telefone" value="' + esc(S.q) + '"></div>';
+  var lim = 15 + S.pmore;
+  if (S.q) {
+    var achou = X.filter(function (x) { return match(x, ['loja', 'cidade', 'uf', 'id', 'insta', 'segmento']); })
+      .sort(function (a, b) { return sev(xAlert(a)) - sev(xAlert(b)) || String(a.loja).localeCompare(String(b.loja)); });
+    if (!achou.length) return out + '<div class="empty">' + penaSvg() + '<p>Nenhuma loja encontrada para “' + esc(S.q) + '”.</p></div>';
+    return out + '<p class="hint" style="color:var(--muted);font-size:13px;margin:-4px 0 10px">' + achou.length + (achou.length > 1 ? ' lojas encontradas' : ' loja encontrada') + '</p><div class="list two">' + achou.slice(0, lim).map(xCard).join('') + '</div>' +
+      (achou.length > lim ? '<div style="margin-top:10px"><button class="more" data-act="more">Ver mais</button></div>' : '');
+  }
+  if (S.pmode === 'agenda') {
+    if (!pb.agenda.length) return out + '<div class="empty">' + penaSvg() + '<p>Nenhum toque ou retorno agendado.</p></div>';
+    var grupos = {}, ordem = [];
+    pb.agenda.forEach(function (x) { var k = x.prox < D.today ? 'atrasados' : x.prox; if (!grupos[k]) { grupos[k] = []; ordem.push(k); } grupos[k].push(x); });
+    ordem.sort(function (a, b) { return a === 'atrasados' ? -1 : b === 'atrasados' ? 1 : a.localeCompare(b); });
+    return out + ordem.slice(0, 20 + Math.floor(S.pmore / 20) * 10).map(function (k) {
+      var titulo = k === 'atrasados' ? 'Atrasados' : k === D.today ? 'Hoje' : (rel(k) === br(k) ? '' : rel(k).charAt(0).toUpperCase() + rel(k).slice(1) + ' · ') + new Date(dU(k) + 12 * 36e5).toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', timeZone: 'UTC' });
+      return section(titulo, '', grupos[k], xCard, true);
+    }).join('');
+  }
+  if (S.pmode === 'hoje') {
+    var falta = Math.max(0, D.prosp.meta - pb.feitos - pb.atras.length - pb.hoje.length - pb.reativar.length);
+    var body = section('Retornos combinados', 'A loja pediu para falar nesta data.', pb.ret, xCard, true) +
+      section('Qualificar e passar ao ' + esc(D.prosp.closer || 'closer'), 'Responderam. Descubra decisor, CNPJ, marcas e época de compra.', pb.qualif, xCard, true) +
+      section('Toques atrasados', '', pb.atras, xCard, true) +
+      section('Toques de hoje', '', pb.hoje, xCard, true) +
+      section('Reativar', 'Terminaram a cadência há 60 dias sem resposta.', pb.reativar, xCard, true) +
+      section('Comece pelas novas', falta ? 'Faltam ' + falta + ' toques para a meta de hoje. A lista está por prioridade (tier e score).' : 'Meta do dia batida. Se sobrar tempo, siga pela lista.', pb.novas, xCard, true, Math.max(5, Math.min(falta || 5, 15)) + S.pmore);
+    return out + (body || '<div class="empty">' + penaSvg() + '<p><b>Nada pendente.</b><br>Sem lojas na sua fila hoje.</p></div>');
+  }
+  var arr = S.pmode === 'novas' ? pb.novas : X.slice().sort(function (a, b) { return sev(xAlert(a)) - sev(xAlert(b)) || String(a.loja).localeCompare(String(b.loja)); });
+  arr = arr.filter(function (x) { return match(x, ['loja', 'cidade', 'uf', 'id', 'insta', 'segmento']); });
+  if (!arr.length) return out + '<div class="empty">' + penaSvg() + '<p>Nenhuma loja aqui.</p></div>';
+  return out + '<div class="list two">' + arr.slice(0, lim).map(xCard).join('') + '</div>' +
+    (arr.length > lim ? '<div style="margin-top:10px"><button class="more" data-act="more">Ver mais ' + Math.min(20, arr.length - lim) + ' de ' + (arr.length - lim) + '</button></div>' : '');
+}
+function viewClientes() {
+  var P = pvs().filter(function (p) { return match(p, ['cliente', 'contato', 'cidade', 'id']); })
+    .sort(function (a, b) { return sev(pvAlert(a)) - sev(pvAlert(b)) || String(a.proxFU || '9').localeCompare(String(b.proxFU || '9')); });
+  var all = pvs();
+  var ativos = all.filter(function (p) { return p.status !== 'Encerrado' && p.status !== 'Inativo'; }).length;
+  var risco = all.filter(function (p) { return p.status === 'Em risco' || (pvAlert(p) || {}).c === 'red'; }).length;
+  var geral = D.admin && S.vend === 'Todos';
+  var rec = soma(all, function (p) { return Number(p.total); }), recMes = soma(all, function (p) { return noMes(p, 'mesTotal'); });
+  var vend = soma(all, function (p) { return Number(p.vendTotal); }), vendMes = soma(all, function (p) { return noMes(p, 'vendMes'); });
+  var mesTxt = function (v) { return v ? money(v) + ' este mês' : 'nada este mês ainda'; };
+  var kpiVenda = geral
+    ? '<div class="kpi"><b>' + (rec ? money(rec) : '—') + '</b><span>Receita dos clientes (ERP)</span><i>' + mesTxt(recMes) + '</i></div>'
+    : '<div class="kpi"><b>' + money(vend) + '</b><span>' + (D.admin ? 'Vendido por ' + esc(S.vend) : 'Vendido por você') + '</span><i>' + mesTxt(vendMes) + '</i></div>';
+  var out = '<h1>Clientes</h1><div class="date">Pós-venda: cuide de quem já comprou</div>' +
+    '<div class="kpis"><div class="kpi"><b>' + all.length + '</b><span>Clientes</span></div>' +
+    '<div class="kpi"><b>' + ativos + '</b><span>Ativos</span></div>' +
+    '<div class="kpi"><b>' + risco + '</b><span>Precisam de atenção</span></div>' + kpiVenda + '</div>';
+  if (geral && rec) {
+    // Receita dividida por quem vendeu (vendedor no Tiny); o resto é de outros vendedores ou sem vendedor no ERP
+    var linhas = D.sellers.map(function (v) {
+      var dele = all.filter(function (p) { return p.vend === v; });
+      return [v, soma(dele, function (p) { return Number(p.vendTotal); }), soma(dele, function (p) { return noMes(p, 'vendMes'); })];
+    });
+    var outros = rec - vend, outrosMes = recMes - vendMes;
+    out += '<div class="lbl" style="margin-top:0">Vendas por vendedor (Olist Tiny)</div><div class="vt">' +
+      linhas.map(function (l) { return '<div><span>' + esc(l[0]) + '</span><b>' + money(l[1]) + '</b><small>' + (l[2] ? money(l[2]) + ' no mês' : '—') + '</small></div>'; }).join('') +
+      (outros > 0.5 ? '<div class="o"><span>Outros ou sem vendedor</span><b>' + money(outros) + '</b><small>' + (outrosMes > 0.5 ? money(outrosMes) + ' no mês' : '—') + '</small></div>' : '') +
+      '</div>';
+  }
+  out += '<div class="bar"><input class="search" id="q" placeholder="Buscar cliente ou cidade" value="' + esc(S.q) + '"></div>';
+  if (!all.length) return out + '<div class="empty">' + penaSvg() + '<p>Quando um lead vira <b>' + esc(GANHO) + '</b>, ele aparece aqui para o pós-venda.</p></div>';
+  return out + '<div class="list two">' + P.map(pvCard).join('') + '</div>';
+}
+
+/* ---------- ficha do lead ---------- */
+var F = null;
+var QUICK = [
+  { k: 'falei', t: '💬 Conversamos', st: function (l) { return l.status === 'Novo' ? 'Em contato' : l.status; }, acao: 'Retomar conversa', d: 2 },
+  { k: 'semresp', t: '📵 Não respondeu', st: function (l) { return l.status === 'Novo' ? 'Em contato' : l.status; }, acao: 'Tentar contato de novo', d: 2, nota: 'Sem resposta.' },
+  { k: 'catalogo', t: '📘 Enviei catálogo', st: function () { return 'Catálogo enviado'; }, acao: 'Cobrar retorno do catálogo', d: 3 },
+  { k: 'negoc', t: '🤝 Negociando', st: function () { return 'Negociação'; }, acao: 'Fechar pedido', d: 2 },
+  { k: 'fechou', t: '🎉 Fechou pedido', st: function () { return GANHO; }, acao: '', d: null },
+  { k: 'depois', t: '⏳ Agora não', st: function () { return 'Nutrição'; }, acao: 'Retomar contato', d: 30 },
+  { k: 'perdeu', t: '✖ Não vai comprar', st: function () { return PERDIDO; }, acao: '', d: null }
+];
+function getLead(id) { return D.leads.filter(function (l) { return l.id === id; })[0]; }
+function getPV(id) { return D.pv.filter(function (p) { return p.id === id; })[0]; }
+function getX(id) { return D.prosp ? D.prosp.rows.filter(function (x) { return x.id === id; })[0] : null; }
+function openSheet(html) {
+  var sh = document.getElementById('sheet'), p = document.getElementById('panel');
+  p.innerHTML = html; sh.classList.remove('hidden'); document.body.style.overflow = 'hidden';
+}
+function closeSheet() { document.getElementById('sheet').classList.add('hidden'); document.getElementById('panel').classList.remove('wide'); document.body.style.overflow = ''; F = null; S.sheet = null; }
+function paint(h) {
+  var pb = document.querySelector('.pb'), top = pb ? pb.scrollTop : 0;
+  if (document.querySelector('#panel .ph') && S.sheet && S.sheet.rendered === F.id) {
+    var open = [].map.call(document.querySelectorAll('#panel details'), function (d) { return d.open; });
+    document.getElementById('panel').innerHTML = h;
+    [].forEach.call(document.querySelectorAll('#panel details'), function (d, i) { if (open[i]) d.open = true; });
+    document.querySelector('.pb').scrollTop = top;
+  } else { openSheet(h); S.sheet.rendered = F.id; }
+}
+function head(title, sub) {
+  return '<div class="ph"><div style="min-width:0"><h2>' + esc(title) + '</h2><div class="sub">' + esc(sub) + '</div></div><button class="x" data-act="close" aria-label="Fechar">×</button></div>';
+}
+function contactRow(phone, nome, email, msgUrl, ig, map) {
+  var wa = msgUrl || waLead(phone, nome), d = digits(phone);
+  return '<div class="acts five">' +
+    '<a class="act w' + (wa ? '' : ' off') + '" href="' + (wa || '#') + '" target="_blank" rel="noopener">' + ICON.chat + 'WhatsApp</a>' +
+    '<a class="act' + (d.length >= 10 ? '' : ' off') + '" href="tel:+55' + d + '">' + ICON.phone + 'Ligar</a>' +
+    '<a class="act i' + (ig ? '' : ' off') + '" href="' + (ig || '#') + '" target="_blank" rel="noopener">' + ICON.ig + 'Instagram</a>' +
+    '<a class="act' + (map ? '' : ' off') + '" href="' + (map || '#') + '" target="_blank" rel="noopener">' + ICON.pin + 'Mapa</a>' +
+    '<a class="act' + (email ? '' : ' off') + '" href="mailto:' + esc(email) + '">' + ICON.mail + 'E-mail</a></div>';
+}
+function dateChips(cur, presets, field) {
+  var h = presets.map(function (p) {
+    var v = addDays(D.today, p[1]);
+    return '<button class="chip' + (cur === v ? ' on' : '') + '" data-date="' + v + '" data-field="' + field + '">' + p[0] + '</button>';
+  }).join('');
+  var custom = cur && !presets.some(function (p) { return addDays(D.today, p[1]) === cur; });
+  // "Outra data" mostra um campo de data visível (o seletor escondido não abre no computador dentro do Apps Script)
+  var aberto = custom || (F && F.dtOpen === field);
+  return '<div class="chips">' + h +
+    '<button class="chip' + (custom ? ' on' : '') + '" data-dtopen="' + field + '">📅 ' + (custom ? br(cur) : 'Outra data') + '</button>' +
+    (cur ? '<button class="chip" data-date="" data-field="' + field + '">Sem data</button>' : '') + '</div>' +
+    (aberto ? '<div class="dtrow"><input type="date" class="fld" data-datein="' + field + '" min="' + D.today + '" value="' + esc(cur || '') + '" aria-label="Escolher data"><span>Toque no calendário ou digite a data</span></div>' : '');
+}
+function openLead(id, preset) {
+  var l = getLead(id); if (!l) return;
+  S.sheet = { type: 'lead', id: id };
+  F = { id: id, status: l.status, acao: l.acao, dataAcao: l.dataAcao, temp: l.temp, motivo: l.motivo, pedido: '', nota: '', contato: false, quick: null, resp: l.resp, dados: {}, hist: null, conta: l.conta, vis: null };
+  if (preset && preset !== l.status) applyStatus(preset);
+  renderLead();
+}
+function applyQuick(k) {
+  var l = getLead(F.id), q = QUICK.filter(function (x) { return x.k === k; })[0];
+  if (F.quick === k) { F.quick = null; F.status = l.status; F.acao = l.acao; F.dataAcao = l.dataAcao; F.contato = false; return; }
+  F.quick = k; F.contato = true;
+  var st = q.st(l); if (ST[st]) F.status = st;
+  F.acao = q.acao; F.dataAcao = q.d == null ? '' : addDays(D.today, q.d);
+  if (q.nota && !F.nota) F.nota = q.nota;
+}
+function applyStatus(st) {
+  F.status = st;
+  var t = (ST[st] || {}).t;
+  if (t && t !== 'Aberto') { F.acao = ''; F.dataAcao = ''; }
+}
+function renderLead() {
+  var l = getLead(F.id);
+  var tipo = (ST[F.status] || {}).t || 'Aberto';
+  var sub = [l.loja, [l.cidade, l.uf].filter(Boolean).join('/')].filter(Boolean).join(' · ');
+  var a = leadAlert(l);
+  var meta = '<div class="meta">' + pill(l.status) +
+    (l.origem ? '<span class="tag">' + esc(l.origem) + '</span>' : '') +
+    (l.entrada ? '<span class="tag">Entrou ' + rel(msIso(l.entrada)) + '</span>' : '') +
+    (l.ultContato ? '<span class="tag">Último contato ' + rel(l.ultContato) + '</span>' : '') +
+    (a && a.c === 'red' ? '<span class="tag red">' + esc(a.t) + '</span>' : '') + '</div>';
+  var h = head(l.nome || l.loja, sub || l.id) + '<div class="pb">' + contactRow(l.whats, l.nome, l.email, waLead(l.whats, l.nome, l.resp), igFind(l.insta, l.loja || l.nome, l.cidade), mapUrl(l.loja || l.nome, l.cidade, l.uf)) + meta +
+    '<div class="lbl">O que aconteceu?</div><div class="chips">' +
+    QUICK.filter(function (q) { return ST[q.st(l)]; }).map(function (q) { return '<button class="chip q' + (F.quick === q.k ? ' on' : '') + '" data-quick="' + q.k + '">' + q.t + '</button>'; }).join('') + '</div>' +
+    '<textarea class="fld" id="f-nota" style="margin-top:8px" placeholder="Anote o que conversaram (opcional)">' + esc(F.nota) + '</textarea>' +
+    '<div class="lbl">Etapa</div><div class="chips scroll">' +
+    D.status.map(function (s) { return '<button class="chip' + (F.status === s.s ? ' on' : '') + '" data-st="' + esc(s.s) + '">' + esc(s.s) + '</button>'; }).join('') + '</div>';
+  if (F.status === PERDIDO) {
+    h += '<div class="lbl">Por que não vai comprar?</div><select class="fld" id="f-motivo"><option value="">Escolha o motivo</option>' +
+      D.motivos.map(function (m) { return '<option' + (F.motivo === m ? ' selected' : '') + '>' + esc(m) + '</option>'; }).join('') + '</select>';
+  }
+  if (tipo === 'Ganho' && l.status !== F.status) {
+    h += '<div class="lbl">Valor do 1º pedido <small>opcional</small></div><input class="fld" id="f-pedido" inputmode="decimal" placeholder="R$ 0,00" value="' + esc(F.pedido) + '">' +
+      '<div class="note">O cliente vai para o pós-venda (aba Clientes) com o primeiro follow-up agendado.</div>';
+  }
+  if (tipo === 'Aberto') {
+    h += '<div class="lbl">Próximo passo</div><input class="fld" id="f-acao" list="acoes" placeholder="Ex.: Cobrar retorno do catálogo" value="' + esc(F.acao) + '">' +
+      '<datalist id="acoes"><option>Fazer 1º contato</option><option>Enviar catálogo</option><option>Cobrar retorno do catálogo</option><option>Enviar proposta</option><option>Fechar pedido</option><option>Ligar</option><option>Retomar contato</option></datalist>' +
+      '<div style="margin-top:8px">' + dateChips(F.dataAcao, [['Hoje', 0], ['Amanhã', 1], ['+3 dias', 3], ['+7 dias', 7], ['+15 dias', 15]], 'dataAcao') + '</div>' +
+      '<div class="lbl">Temperatura</div><div class="chips">' + D.temps.map(function (t) { return '<button class="chip' + (F.temp === t ? ' on' : '') + '" data-temp="' + esc(t) + '"><span class="temp ' + esc(t) + '" style="display:inline-block;margin-right:6px"></span>' + esc(t) + '</button>'; }).join('') + '</div>';
+  }
+  if (D.admin) {
+    h += '<div class="lbl">Responsável</div><select class="fld" id="f-resp"><option value="">— sem responsável —</option>' +
+      D.sellers.map(function (s) { return '<option' + (F.resp === s ? ' selected' : '') + '>' + esc(s) + '</option>'; }).join('') + '</select>';
+  }
+  if (l.pedERP) {
+    h += '<div class="lbl">No ERP (Olist Tiny)</div><div class="mx"><div><b>' + l.pedERP + '</b><span>Pedidos</span></div><div><b>' + money(l.totalERP) + '</b><span>Total comprado</span></div></div>' +
+      (l.ultPedERP ? '<div class="note">Último pedido ' + rel(l.ultPedERP) + ' (' + br(l.ultPedERP) + ')</div>' : '');
+  }
+  var dv = function (k) { return F.dados[k] !== undefined ? F.dados[k] : (l[k] === '' || l[k] == null ? '' : l[k]); };
+  h += '<details><summary>Dados do lead</summary>' +
+    '<div class="grid2"><div class="f"><label>Nome</label><input class="fld" data-dado="nome" value="' + esc(dv('nome')) + '"></div>' +
+    '<div class="f"><label>Loja</label><input class="fld" data-dado="loja" value="' + esc(dv('loja')) + '"></div>' +
+    '<div class="f"><label>WhatsApp</label><input class="fld" data-dado="whats" inputmode="tel" value="' + esc(dv('whats')) + '"></div>' +
+    '<div class="f"><label>E-mail</label><input class="fld" data-dado="email" inputmode="email" value="' + esc(dv('email')) + '"></div>' +
+    '<div class="f"><label>Cidade</label><input class="fld" data-dado="cidade" value="' + esc(dv('cidade')) + '"></div>' +
+    '<div class="f"><label>UF</label><select class="fld" data-dado="uf"><option></option>' + D.ufs.map(function (u) { return '<option' + (dv('uf') === u ? ' selected' : '') + '>' + u + '</option>'; }).join('') + '</select></div>' +
+    '<div class="f"><label>CNPJ / CPF</label><input class="fld" data-dado="doc" value="' + esc(dv('doc')) + '"></div>' +
+    '<div class="f"><label>Instagram</label><input class="fld" data-dado="insta" autocapitalize="off" value="' + esc(dv('insta')) + '" placeholder="@perfildaloja"></div>' +
+    '<div class="f"><label>Potencial (R$)</label><input class="fld" data-dado="potencial" inputmode="decimal" value="' + esc(dv('potencial')) + '"></div></div>' +
+    '<div class="note">' + esc(l.id) + (l.resp ? ' · responsável: ' + esc(l.resp) : ' · sem responsável (ao salvar, fica com você)') + '</div></details>' +
+    '<details id="d-hist"><summary>Anotações e histórico</summary>' + (l.obs ? '<div class="obs">' + esc(l.obs) + '</div>' : '') +
+    '<ul class="hist" id="histList">' + histHtml() + '</ul></details>' + visBlock();
+  h += '</div><div class="pf"><button class="btn primary" data-act="saveLead" id="btnSave">Salvar</button></div>';
+  paint(h);
+}
+function histHtml() {
+  if (!F || F.hist === null) return '<li><small>Toque para carregar…</small></li>';
+  if (!F.hist.length) return '<li><small>Sem registros.</small></li>';
+  return F.hist.map(function (x) {
+    var d = new Date(x.t);
+    return '<li>' + esc(x.ev) + (x.para && x.de !== x.para ? ' <small>(' + esc(x.de || '—') + ' → ' + esc(x.para) + ')</small>' : '') +
+      '<br><small>' + d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) + '</small></li>';
+  }).join('');
+}
+function loadHist() {
+  if (!F || F.hist !== null || S.sheet.type !== 'lead') return;
+  var id = F.id;
+  call('crmHistory', id).then(function (h) { if (F && F.id === id) { F.hist = h; var el = document.getElementById('histList'); if (el) el.innerHTML = histHtml(); } })
+    .catch(function (e) { toast(e.message, true); });
+}
+function readLeadInputs() {
+  var g = function (id) { var el = document.getElementById(id); return el ? el.value : undefined; };
+  if (g('f-nota') !== undefined) F.nota = g('f-nota');
+  if (g('f-acao') !== undefined) F.acao = g('f-acao');
+  if (g('f-motivo') !== undefined) F.motivo = g('f-motivo');
+  if (g('f-pedido') !== undefined) F.pedido = g('f-pedido');
+  if (g('f-resp') !== undefined) F.resp = g('f-resp');
+  document.querySelectorAll('[data-dado]').forEach(function (el) { F.dados[el.getAttribute('data-dado')] = el.value; });
+}
+function busy(btn, on, txt) { btn.disabled = on; btn.textContent = on ? 'Salvando…' : txt; }
+function saveLead() {
+  readLeadInputs();
+  var l = getLead(F.id), ch = {};
+  var tipo = (ST[F.status] || {}).t;
+  if (F.status !== l.status) ch.status = F.status;
+  if (F.status === PERDIDO && !F.motivo) { toast('Escolha o motivo de perda.', true); return; }
+  if (F.status === PERDIDO && F.motivo !== l.motivo) ch.motivo = F.motivo;
+  if ((F.acao || '') !== (l.acao || '')) ch.acao = F.acao || '';
+  if ((F.dataAcao || '') !== (l.dataAcao || '')) ch.dataAcao = F.dataAcao || '';
+  if ((F.temp || '') !== (l.temp || '')) ch.temp = F.temp || '';
+  if (tipo === 'Ganho' && F.pedido) ch.pedido = F.pedido;
+  if (F.nota && F.nota.trim()) { ch.nota = F.nota.trim(); ch.contato = true; }
+  if (F.contato) ch.contato = true;
+  if (D.admin && (F.resp || '') !== (l.resp || '')) ch.resp = F.resp || '';
+  Object.keys(F.dados).forEach(function (k) { if (String(F.dados[k]) !== String(l[k] == null ? '' : l[k])) ch[k] = F.dados[k]; });
+  if (!Object.keys(ch).length) { closeSheet(); return; }
+  var btn = document.getElementById('btnSave'); busy(btn, true);
+  call('crmUpdateLead', F.id, ch).then(function (res) {
+    var saiu = replaceLead(res.lead);
+    if (res.pv) upsertPV(res.pv);
+    syncProspFromLead(res.lead);
+    closeSheet(); render();
+    toast(res.pv && ch.status ? '🎉 Pedido fechado! O cliente foi para o pós-venda.' : saiu ? 'Salvo ✓ O lead passou para ' + res.lead.resp + '.' : 'Salvo ✓');
+  }).catch(function (e) { busy(btn, false, 'Salvar'); toast(e.message || 'Não consegui salvar', true); });
+}
+/* devolve true se o lead saiu da carteira de quem está usando (ex.: passou para o closer) */
+function replaceLead(nl) {
+  if (!nl) return false;
+  var fora = !D.admin && nl.resp && nl.resp !== D.me;
+  for (var i = 0; i < D.leads.length; i++) if (D.leads[i].id === nl.id) { if (fora) D.leads.splice(i, 1); else D.leads[i] = nl; return fora; }
+  if (!fora) D.leads.push(nl);
+  return fora;
+}
+function upsertPV(p) { for (var i = 0; i < D.pv.length; i++) if (D.pv[i].id === p.id) { if (!p.insta) p.insta = D.pv[i].insta; D.pv[i] = p; return; } D.pv.push(p); }
+function upsertX(x) { if (!D.prosp) return; for (var i = 0; i < D.prosp.rows.length; i++) if (D.prosp.rows[i].id === x.id) { D.prosp.rows[i] = x; return; } D.prosp.rows.push(x); }
+function syncProspFromLead(l) {
+  if (!D.prosp || !l) return;
+  D.prosp.rows.forEach(function (x) {
+    if (x.lead !== l.id) return;
+    if (l.tipo === 'Ganho') { x.status = PSK.CLIENTE || x.status; x.proxPasso = 'Cliente'; }
+    else if (['Qualificado', 'Catálogo enviado', 'Negociação'].indexOf(l.status) >= 0 && PSK.QUALIFICADO) { x.status = PSK.QUALIFICADO; x.proxPasso = 'Com o ' + D.prosp.closer; x.prox = ''; }
+  });
+}
+
+/* ---------- ficha da loja (prospecção) ---------- */
+function openX(id, viaContato) {
+  var x = getX(id); if (!x) return;
+  S.sheet = { type: 'x', id: id };
+  F = { id: id, etapa: viaContato ? etapaSugerida(x) : '', res: '', nota: '', q: {}, ret: x.proxPasso === 'Retorno solicitado' ? x.prox : '', xresp: x.resp || '', conta: x.conta, vis: null };
+  renderX();
+}
+function renderX() {
+  var x = getX(F.id), sug = etapaSugerida(x), etapaRot = F.etapa || sug || x.proxPasso;
+  var a = xAlert(x), closer = D.prosp.closer || 'closer';
+  var resp = x.status === PSK.RESPONDEU || F.res === 'resp';
+  var jaCli = !!PSK.JA_CLIENTE && x.status === PSK.JA_CLIENTE;
+  var fech = x.status === PSK.QUALIFICADO || x.status === PSK.CLIENTE || jaCli;
+  var sub = [[x.cidade, x.uf].filter(Boolean).join('/'), x.tier ? 'Tier ' + x.tier : '', x.score !== '' ? 'score ' + x.score : ''].filter(Boolean).join(' · ');
+  var wa = waUrl(x.whats, resp ? '' : roteiro(x, etapaRot));
+  var d = digits(x.whats);
+  var h = head(x.loja, sub) + '<div class="pb">' +
+    '<div class="acts four">' +
+    '<a class="act w' + (wa ? '' : ' off') + '" href="' + (wa || '#') + '" target="_blank" rel="noopener" data-xc="wa">' + ICON.chat + 'WhatsApp</a>' +
+    '<a class="act i' + (x.insta ? '' : ' off') + '" href="' + (igUrl(x.insta) || '#') + '" target="_blank" rel="noopener" data-xc="ig">' + ICON.ig + 'Instagram</a>' +
+    '<a class="act' + (d.length >= 10 ? '' : ' off') + '" href="tel:+55' + d + '" data-xc="tel">' + ICON.phone + 'Ligar</a>' +
+    '<a class="act" href="https://www.google.com/maps/search/' + encodeURIComponent([x.loja, x.cidade, x.uf].join(' ')) + '" target="_blank" rel="noopener">' + ICON.pin + 'Mapa</a></div>' +
+    '<div class="meta">' + pill(x.status, XST) + (x.segmento ? '<span class="tag">' + esc(x.segmento) + '</span>' : '') +
+    (x.ultToque ? '<span class="tag">Último toque ' + rel(x.ultToque) + '</span>' : '') + (x.wa === 'Não' ? '<span class="tag">Telefone fixo</span>' : '') +
+    (a && a.c === 'red' ? '<span class="tag red">' + esc(a.t) + '</span>' : '') + '</div>';
+  if (!resp && !fech && F.res !== 'cliente') {
+    h += '<div class="lbl">Mensagem do toque <small>' + esc(etapaRot || '') + '</small></div><div class="script">' + esc(roteiro(x, etapaRot)) + '</div>' +
+      '<div class="note">O botão WhatsApp já abre com essa mensagem. Revise antes de enviar.</div>' +
+      '<div class="lbl">Qual toque você fez agora?</div><div class="chips">' +
+      D.prosp.etapas.map(function (e) { return '<button class="chip' + (e.e === sug ? ' sug' : '') + (F.etapa === e.e ? ' on' : '') + '" data-etapa="' + esc(e.e) + '">' + esc(e.e) + '</button>'; }).join('') + '</div>' +
+      (F.etapa ? '<div class="note">Próximo toque agendado sozinho: ' + esc(((D.prosp.etapas.filter(function (e) { return e.e === F.etapa; })[0]) || {}).prox || '') + ' ' + (function (dt) { return rel(dt) + (/^em /.test(rel(dt)) ? ' (' + ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'][new Date(dU(dt)).getUTCDay()] + ', ' + br(dt) + ')' : ''); })(dataToque(D.today, ((D.prosp.etapas.filter(function (e) { return e.e === F.etapa; })[0]) || {}).dias || 0)) + ', contando só dias úteis.</div>' : '');
+  }
+  if (!fech) {
+    h += '<div class="lbl">Resultado</div><div class="chips">' +
+      (x.status !== PSK.RESPONDEU ? '<button class="chip q' + (F.res === 'resp' ? ' on' : '') + '" data-res="resp">🎉 Respondeu</button>' : '') +
+      '<button class="chip q' + (F.res === 'semint' ? ' on' : '') + '" data-res="semint">✖ Sem interesse</button>' +
+      '<button class="chip q' + (F.res === 'fora' ? ' on' : '') + '" data-res="fora">Fora do perfil</button>' +
+      (PSK.JA_CLIENTE ? '<button class="chip q' + (F.res === 'cliente' ? ' on' : '') + '" data-res="cliente">⭐ Já é cliente</button>' : '') + '</div>' +
+      (F.res === 'cliente' ? '<div class="note">A loja já compra da Indião: sai da cadência e da fila, não conta no Placar como prospecção nova. Se puder, anote com quem ela compra (Pedro, site, representante).</div>' : '');
+  }
+  if (resp) {
+    var q = function (k) { return F.q[k] !== undefined ? F.q[k] : (x[k] || ''); };
+    h += '<div class="lbl">Qualificação <small>para passar ao ' + esc(closer) + '</small></div><div class="qbox">' +
+      '<div class="f"><label>Quem decide as compras? *</label><input class="fld" data-q="decisor" value="' + esc(q('decisor')) + '" placeholder="Nome do decisor"></div>' +
+      '<div class="f"><label>CNPJ *</label><input class="fld" data-q="cnpj" inputmode="numeric" value="' + esc(q('cnpj')) + '" placeholder="00.000.000/0000-00"></div>' +
+      '<div class="f"><label>Marcas que trabalha</label><input class="fld" data-q="marcas" value="' + esc(q('marcas')) + '"></div>' +
+      '<div class="grid2"><div class="f"><label>Público</label><input class="fld" data-q="publico" value="' + esc(q('publico')) + '"></div>' +
+      '<div class="f"><label>Época de compra</label><input class="fld" data-q="epoca" value="' + esc(q('epoca')) + '"></div></div>' +
+      '<button class="btn dark" style="width:100%;margin-top:4px" data-act="passar">Passar para o ' + esc(closer) + ' →</button>' +
+      '<div class="note">Com decisor e CNPJ, o lead vai para o ' + esc(closer) + ' com tudo anotado e ele recebe aviso.</div></div>';
+  }
+  if (fech) {
+    h += '<div class="warn" style="background:var(--wa-soft);color:var(--wa)">' + (jaCli ? '⭐ Já era cliente da Indião. Fora da cadência de prospecção.' : x.status === PSK.CLIENTE ? 'Virou cliente 🎉' : 'Já está com o ' + esc(closer) + ' para fechar.') + (x.lead ? ' Lead ' + esc(x.lead) + '.' : '') + '</div>' +
+      (jaCli ? '<div class="note">Marcou por engano? ' + (D.admin ? 'Corrija o status em "Dados da loja", logo abaixo.' : 'Avise o gestor para corrigir.') + '</div>' : '');
+  }
+  if (!fech && F.res !== 'semint' && F.res !== 'fora' && F.res !== 'cliente') {
+    h += '<div class="lbl">Retorno pedido pela loja <small>opcional</small></div>' +
+      dateChips(F.ret, [['Amanhã', 1], ['+3 dias', 3], ['+7 dias', 7], ['+15 dias', 15], ['+30 dias', 30]], 'ret') +
+      '<div class="note">A loja pediu para falar depois? Marque a data: ela sai da fila de hoje e volta na Agenda no dia certo.</div>';
+  }
+  h += '<div class="lbl">Anotação <small>opcional</small></div><textarea class="fld" id="f-nota" placeholder="Ex.: falei com a dona, pediu retorno depois do dia 10">' + esc(F.nota) + '</textarea>';
+  // Gestor pode trocar quem aborda a loja (a divisão automática não impede ajuste manual)
+  if (D.admin) {
+    h += '<div class="lbl">Quem aborda esta loja</div><select class="fld" id="f-xresp"><option value="">— sem responsável —</option>' +
+      D.sellers.map(function (s) { return '<option' + (F.xresp === s ? ' selected' : '') + '>' + esc(s) + '</option>'; }).join('') + '</select>';
+  }
+  h += '<details><summary>Dados da loja</summary><div class="grid2">' +
+    '<div class="f"><label>Telefone</label><input class="fld" data-q="whats" inputmode="tel" value="' + esc(F.q.whats !== undefined ? F.q.whats : x.whats) + '"></div>' +
+    '<div class="f"><label>Instagram</label><input class="fld" data-q="insta" value="' + esc(F.q.insta !== undefined ? F.q.insta : x.insta) + '" placeholder="@loja"></div></div>' +
+    (D.admin ? '<div class="f"><label>Status (correção do gestor)</label><select class="fld" id="f-xstatus">' + D.prosp.status.map(function (s) { return '<option' + ((F.xstatus || x.status) === s.s ? ' selected' : '') + '>' + esc(s.s) + '</option>'; }).join('') + '</select></div>' : '') +
+    (x.sinais ? '<div class="note"><b>Levantamento:</b> ' + esc(x.sinais) + '</div>' : '') +
+    (x.endereco ? '<div class="note"><b>Endereço:</b> ' + esc(x.endereco) + '</div>' : '') +
+    (x.nota !== '' && x.nota != null ? '<div class="note"><b>Google:</b> nota ' + esc(x.nota) + (x.aval ? ' · ' + esc(x.aval) + ' avaliações' : '') + '</div>' : '') +
+    '<div class="note">' + esc(x.id) + (x.resp ? ' · com ' + esc(x.resp) : '') + (x.lead ? ' · lead ' + esc(x.lead) : '') + '</div></details>' +
+    (x.obs ? '<details><summary>Anotações anteriores</summary><div class="obs">' + esc(x.obs) + '</div></details>' : '') +
+    visBlock() + '</div><div class="pf"><button class="btn primary" data-act="saveX" id="btnSave">Salvar</button></div>';
+  paint(h);
+}
+function readX() {
+  var n = document.getElementById('f-nota'); if (n) F.nota = n.value;
+  var xr = document.getElementById('f-xresp'); if (xr) F.xresp = xr.value;
+  var xs = document.getElementById('f-xstatus'); if (xs) F.xstatus = xs.value;
+  document.querySelectorAll('[data-q]').forEach(function (el) { F.q[el.getAttribute('data-q')] = el.value; });
+}
+function saveX(passar) {
+  readX();
+  var x = getX(F.id), ch = {};
+  Object.keys(F.q).forEach(function (k) { if (String(F.q[k]) !== String(x[k] || '')) ch[k] = F.q[k]; });
+  if (F.etapa) ch.etapa = F.etapa;
+  if (D.admin && (F.xresp || '') !== (x.resp || '')) ch.resp = F.xresp || '';
+  if (D.admin && F.xstatus && F.xstatus !== x.status) ch.status = F.xstatus;
+  if (F.nota.trim()) ch.nota = F.nota.trim();
+  if (F.res === 'resp') ch.status = PSK.RESPONDEU;
+  if (F.res === 'semint') ch.status = PSK.SEM_INTERESSE;
+  if (F.res === 'fora') ch.status = PSK.FORA;
+  if (F.res === 'cliente' && PSK.JA_CLIENTE) { ch.status = PSK.JA_CLIENTE; delete ch.etapa; }
+  var retAntes = x.proxPasso === 'Retorno solicitado' ? x.prox : '';
+  if ((F.ret || '') !== (retAntes || '') && F.res !== 'semint' && F.res !== 'fora' && F.res !== 'cliente') {
+    if (F.ret) { ch.prox = F.ret; ch.proxPasso = 'Retorno solicitado'; }
+    else if (retAntes) { ch.prox = ''; ch.proxPasso = ''; }
+  }
+  if (passar) {
+    var dec = F.q.decisor !== undefined ? F.q.decisor : x.decisor, cnpj = F.q.cnpj !== undefined ? F.q.cnpj : x.cnpj;
+    if (!String(dec || '').trim() || !String(cnpj || '').trim()) { toast('Preencha quem decide e o CNPJ para passar ao ' + D.prosp.closer + '.', true); return; }
+    if (x.status !== PSK.RESPONDEU && !ch.status) ch.status = PSK.RESPONDEU;
+    ch.passar = true;
+  }
+  if (!Object.keys(ch).length) { closeSheet(); return; }
+  var btn = document.getElementById('btnSave'); busy(btn, true);
+  var id = F.id;
+  var go = function (c) { return call('crmUpdateProsp', id, c); };
+  var p;
+  if (ch.passar) {
+    delete ch.passar;
+    p = (ch.status === PSK.RESPONDEU || Object.keys(ch).length ? go(ch) : Promise.resolve(null)).then(function () { return go({ status: PSK.QUALIFICADO }); });
+  } else p = go(ch);
+  p.then(function (res) {
+    upsertX(res.prosp);
+    if (res.lead) replaceLead(res.lead);
+    closeSheet(); render();
+    toast(res.aviso ? '✓ ' + res.prosp.loja + ' ' + res.aviso + '.' : ch.status && ch.status === PSK.JA_CLIENTE ? '⭐ ' + res.prosp.loja + ' marcada como já cliente ✓' : ch.resp !== undefined && !ch.etapa && !ch.status ? (ch.resp ? 'Loja passada para ' + ch.resp + ' ✓' : 'Loja ficou sem responsável ✓') : ch.proxPasso === 'Retorno solicitado' ? 'Retorno agendado para ' + br(res.prosp.prox) + ' ✓' : ch.etapa ? 'Toque registrado ✓ Próximo: ' + (res.prosp.proxPasso || '—') + ' ' + rel(res.prosp.prox) : 'Salvo ✓');
+  }).catch(function (e) { busy(btn, false, 'Salvar'); toast(e.message || 'Não consegui salvar', true); });
+}
+
+/* ---------- ficha do cliente (pós-venda) ---------- */
+var PQUICK = [
+  { k: 'falei', t: '💬 Falei com o cliente', contato: true, d: 30 },
+  { k: 'semresp', t: '📵 Não respondeu', contato: false, d: 2, nota: 'Tentativa sem resposta.' },
+  { k: 'problema', t: '⚠️ Tem um problema', contato: true, d: 2, tipo: 'Resolver problema' },
+  { k: 'repor', t: '📦 Vai repor estoque', contato: true, d: 7, tipo: 'Giro de vendas / reposição' }
+];
+function openPV(id) {
+  var p = getPV(id); if (!p) return;
+  S.sheet = { type: 'pv', id: id };
+  F = { id: id, status: p.status, proxFU: p.proxFU, tipoFU: p.tipoFU, satisf: p.satisf, nota: '', contato: false, quick: null, conta: p.conta, vis: null };
+  renderPV();
+}
+function renderPV() {
+  var p = getPV(F.id);
+  var ds = semCompra(p), ticket = p.nPed ? p.total / p.nPed : '';
+  var h = head(p.cliente, [p.contato, p.cidade].filter(Boolean).join(' · ')) +
+    '<div class="pb">' + contactRow(p.whats, p.contato, '', waLead(p.whats, p.contato, p.vend), igFind(p.insta, p.cliente, String(p.cidade || '').split('/')[0]), mapUrl(p.cliente, p.cidade, '')) +
+    '<div class="mx"><div><b>' + (p.nPed || 0) + '</b><span>Pedidos</span></div><div><b>' + (p.total ? money(p.total) : '—') + '</b><span>Total comprado</span></div>' +
+    '<div><b>' + (ticket ? money(ticket) : '—') + '</b><span>Ticket médio</span></div><div><b>' + (ds != null ? ds + ' dias' : '—') + '</b><span>Sem comprar</span></div></div>' +
+    pvShareNote(p) +
+    (p.ultContato ? '<div class="note">Último contato ' + rel(p.ultContato) + (p.resultado ? ': ' + esc(p.resultado) : '') + '</div>' : '') +
+    '<div class="lbl">Registrar follow-up</div><div class="chips">' +
+    PQUICK.map(function (q) { return '<button class="chip q' + (F.quick === q.k ? ' on' : '') + '" data-pquick="' + q.k + '">' + q.t + '</button>'; }).join('') + '</div>' +
+    '<textarea class="fld" id="f-nota" style="margin-top:8px" placeholder="Como foi? (vira o resultado do último contato)">' + esc(F.nota) + '</textarea>' +
+    '<div class="lbl">Próximo follow-up</div>' + dateChips(F.proxFU, [['+7 dias', 7], ['+15 dias', 15], ['+30 dias', 30], ['+60 dias', 60]], 'proxFU') +
+    '<select class="fld" id="f-tipo" style="margin-top:8px">' + D.fuTipos.map(function (t) { return '<option' + (F.tipoFU === t ? ' selected' : '') + '>' + esc(t) + '</option>'; }).join('') + '</select>' +
+    '<div class="lbl">Situação</div><div class="chips">' + D.pvStatus.map(function (s) { return '<button class="chip' + (F.status === s.s ? ' on' : '') + '" data-pst="' + esc(s.s) + '">' + esc(s.s) + '</button>'; }).join('') + '</div>' +
+    '<div class="lbl">Satisfação</div><div class="chips stars">' + [1, 2, 3, 4, 5].map(function (n) { return '<button class="' + (String(F.satisf) === String(n) ? 'on' : '') + '" data-sat="' + n + '">' + n + '★</button>'; }).join('') + '</div>' +
+    (p.obs ? '<details><summary>Anotações</summary><div class="obs">' + esc(p.obs) + '</div></details>' : '') +
+    '<div class="note">' + esc(p.id) + ' · carteira de ' + esc(p.vend) + (p.primPed ? ' · cliente desde ' + br(p.primPed) : '') + '</div>' +
+    visBlock() + '</div><div class="pf"><button class="btn primary" data-act="savePV" id="btnSave">Salvar</button></div>';
+  paint(h);
+}
+function readPV() { F.nota = document.getElementById('f-nota').value; F.tipoFU = document.getElementById('f-tipo').value; }
+function savePV() {
+  var p = getPV(F.id), ch = {};
+  readPV();
+  if (F.status !== p.status) ch.status = F.status;
+  if ((F.proxFU || '') !== (p.proxFU || '')) ch.proxFU = F.proxFU || '';
+  if (F.tipoFU !== p.tipoFU) ch.tipoFU = F.tipoFU;
+  if (String(F.satisf || '') !== String(p.satisf || '')) ch.satisf = F.satisf || '';
+  if (F.nota.trim()) ch.nota = F.nota.trim();
+  if (F.contato) ch.contato = true;
+  if (!Object.keys(ch).length) { closeSheet(); return; }
+  var btn = document.getElementById('btnSave'); busy(btn, true);
+  call('crmUpdatePV', F.id, ch).then(function (np) { upsertPV(np); closeSheet(); render(); toast('Salvo ✓'); })
+    .catch(function (e) { busy(btn, false, 'Salvar'); toast(e.message || 'Não consegui salvar', true); });
+}
+
+/* ---------- novo lead ---------- */
+function openNew() {
+  S.sheet = { type: 'new' };
+  var opt = function (arr, sel) { return arr.map(function (x) { return '<option' + (x === sel ? ' selected' : '') + '>' + esc(x) + '</option>'; }).join(''); };
+  var h = head('Novo lead', 'Lojista que chegou por fora do site') +
+    '<form class="pb" id="fNew" autocomplete="off">' +
+    '<div class="f"><label>Nome do contato *</label><input class="fld" name="nome" required></div>' +
+    '<div class="f"><label>Loja / empresa</label><input class="fld" name="loja"></div>' +
+    '<div class="f"><label>WhatsApp *</label><input class="fld" name="whatsapp" inputmode="tel" placeholder="(11) 99999-9999"></div>' +
+    '<div class="f"><label>E-mail</label><input class="fld" name="email" inputmode="email"></div>' +
+    '<div class="grid2"><div class="f"><label>Cidade</label><input class="fld" name="cidade"></div>' +
+    '<div class="f"><label>UF</label><select class="fld" name="uf"><option></option>' + opt(D.ufs) + '</select></div>' +
+    '<div class="f"><label>Origem</label><select class="fld" name="origem">' + opt(D.origens.filter(function (o) { return o.indexOf('RD Station') < 0; }), 'WhatsApp') + '</select></div>' +
+    '<div class="f"><label>Temperatura</label><select class="fld" name="temperatura"><option></option>' + opt(D.temps) + '</select></div></div>' +
+    (D.admin ? '<div class="f"><label>Responsável</label><select class="fld" name="responsavel">' + opt(D.sellers, D.sellers[0]) + '</select></div>' : '') +
+    '<div class="f"><label>CNPJ / CPF</label><input class="fld" name="cnpj" inputmode="numeric"></div>' +
+    '<div class="f"><label>Próximo passo</label><input class="fld" name="proxima_acao" value="Fazer 1º contato"></div>' +
+    '<div class="f"><label>Quando</label><input class="fld" type="date" name="data_proxima_acao" value="' + D.today + '"></div>' +
+    '<div class="f"><label>Observações</label><textarea class="fld" name="obs"></textarea></div>' +
+    '<div id="dupBox"></div></form>' +
+    '<div class="pf"><button class="btn" data-act="close">Cancelar</button><button class="btn primary" data-act="saveNew" id="btnSave">Salvar lead</button></div>';
+  openSheet(h);
+}
+function saveNew(force) {
+  var f = {}; new FormData(document.getElementById('fNew')).forEach(function (v, k) { f[k] = String(v).trim(); });
+  if (!f.nome && !f.loja) { toast('Informe o nome do contato ou da loja.', true); return; }
+  if (!f.whatsapp && !f.email) { toast('Informe o WhatsApp ou o e-mail.', true); return; }
+  if (force) f.forcar = true;
+  var btn = document.getElementById('btnSave'); busy(btn, true);
+  call('crmAddLead', f).then(function (res) {
+    busy(btn, false, 'Salvar lead');
+    if (res.duplicate) {
+      document.getElementById('dupBox').innerHTML = '<div class="warn">Esse contato já existe: <b>' + esc(res.id) + ' · ' + esc(res.nome) + '</b>' +
+        (res.resp ? ' (com ' + esc(res.resp) + ')' : '') + '.<div class="chips" style="margin-top:8px">' +
+        (res.visivel && getLead(res.id) ? '<button class="chip" data-lead-open="' + esc(res.id) + '">Abrir a ficha</button>' : '') +
+        '<button class="chip" data-act="forceNew">Salvar mesmo assim</button></div></div>';
+      document.getElementById('dupBox').scrollIntoView({ behavior: 'smooth' });
+      return;
+    }
+    if (res.lead) replaceLead(res.lead);
+    closeSheet(); S.tab = 'hoje'; render(); toast('Lead ' + res.id + ' criado ✓');
+  }).catch(function (e) { busy(btn, false, 'Salvar lead'); toast(e.message || 'Não consegui salvar', true); });
+}
+
+/* ---------- moldura ---------- */
+function nav() {
+  var b = todayBuckets(), pb = hasProsp() ? prospBuckets() : null;
+  var pvN = pvs().filter(function (p) { return sev(pvAlert(p)) < 2; }).length;
+  var tabs = [['hoje', 'Hoje', ICON.sun, b.total], ['funil', 'Funil', ICON.cols, 0]];
+  if (pb) tabs.push(['prosp', 'Prospectar', ICON.target, pb.agir]);
+  tabs.push(['clientes', 'Clientes', ICON.users, pvN]);
+  if (D.papel === 'gestor' || D.papel === 'vendas') tabs.push(['visitas', 'Visitas', ICON.pin, 0]);
+  if (D.admin) tabs.push(['painel', 'Painel', ICON.chart, 0]);
+  if (S.tab === 'visitas' && !(D.papel === 'gestor' || D.papel === 'vendas')) S.tab = 'hoje';
+  if (S.tab === 'prosp' && !pb) S.tab = 'hoje';
+  if (S.tab === 'painel' && !D.admin) S.tab = 'hoje';
+  document.getElementById('tabsD').innerHTML = tabs.map(function (t) { return '<button data-tab="' + t[0] + '" class="' + (S.tab === t[0] ? 'on' : '') + '">' + t[1] + (t[3] ? '<span class="n">' + t[3] + '</span>' : '') + '</button>'; }).join('');
+  var bt = function (t) { return '<button data-tab="' + t[0] + '" class="' + (S.tab === t[0] ? 'on' : '') + '">' + t[2] + t[1] + (t[3] ? '<span class="badge">' + t[3] + '</span>' : '') + '</button>'; };
+  var bn = document.getElementById('bnav');
+  bn.style.gridTemplateColumns = tabs.length >= 6 ? '1fr 1fr 50px 1fr 1fr 1fr 1fr' : tabs.length >= 5 ? '1fr 1fr 56px 1fr 1fr 1fr' : tabs.length === 4 ? '1fr 1fr 64px 1fr 1fr' : '1fr 1fr 72px 1fr';
+  bn.classList.toggle('six', tabs.length >= 5);
+  var nd = document.getElementById('newd'); if (nd) nd.textContent = S.tab === 'prosp' ? '+ Nova loja' : '+ Novo lead';
+  bn.innerHTML = bt(tabs[0]) + bt(tabs[1]) + '<button class="plus" data-act="new" aria-label="Novo lead"><span>+</span></button>' + tabs.slice(2).map(bt).join('');
+  document.getElementById('whoBox').innerHTML = D.admin
+    ? '<select id="vend" aria-label="Vendedor"><option>Todos</option>' + D.sellers.map(function (s) { return '<option' + (S.vend === s ? ' selected' : '') + '>' + esc(s) + '</option>'; }).join('') + '</select>'
+    : '<span class="chipme">' + esc(D.me) + '</span>';
+  if (D.admin) document.getElementById('vend').value = S.vend;
+}
+function render() {
+  nav();
+  var v = document.getElementById('view');
+  var focus = document.activeElement && document.activeElement.id === 'q';
+  v.className = S.tab === 'funil' ? 'wide' : '';
+  v.innerHTML = S.tab === 'funil' ? viewFunil() : S.tab === 'clientes' ? viewClientes() : S.tab === 'prosp' ? viewProsp() : S.tab === 'painel' && D.admin ? viewPainel() : S.tab === 'visitas' ? viewVisitas() : viewHoje();
+  if (S.tab === 'visitas') loadVisitas();
+  try { history.replaceState(null, '', '#' + S.tab); } catch (e) { /* sem histórico */ }
+  if (focus) { var q = document.getElementById('q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }
+}
+function refresh(silent) {
+  if (!LOGADO) return Promise.resolve();
+  var b = document.getElementById('refresh'); b.classList.add('spin');
+  return call('crmReload').then(function (nd) {
+    D = nd; indexLists(); b.classList.remove('spin');
+    if (!S.sheet) render(); else nav();
+    if (!silent) toast('Atualizado ✓');
+  }).catch(function (e) { b.classList.remove('spin'); if (!silent) toast(e.message, true); });
+}
+
+/* ---------- eventos ---------- */
+document.addEventListener('click', function (e) {
+  if (e.target.matches && e.target.matches('input[type=date]') && e.target.showPicker) { try { e.target.showPicker(); } catch (x) { /* celular abre sozinho */ } }
+  var t = e.target.closest('[data-tab],[data-act],[data-lead],[data-pv],[data-x],[data-wa],[data-wapv],[data-wax],[data-quick],[data-st],[data-temp],[data-date],[data-pquick],[data-pst],[data-sat],[data-lead-open],[data-pmode],[data-etapa],[data-res],[data-xc],[data-dtopen]');
+  if (!t) return;
+  var d = t.dataset;
+  if (d.wa) { setTimeout(function () { openLead(d.wa); toast('Depois da conversa, registre aqui o que aconteceu.'); }, 400); return; }
+  if (d.wapv) { setTimeout(function () { openPV(d.wapv); }, 400); return; }
+  if (d.wax) { setTimeout(function () { openX(d.wax, true); toast('Toque feito? É só tocar em Salvar.'); }, 400); return; }
+  if (d.xc) { if (S.sheet && S.sheet.type === 'x' && !F.etapa) { var xx = getX(F.id); var sg = etapaSugerida(xx); if (sg && xx.status !== PSK.RESPONDEU) { readX(); F.etapa = sg; setTimeout(renderX, 300); } } return; }
+  if (d.tab) { S.tab = d.tab; S.q = ''; S.pmore = 0; closeSheet(); render(); window.scrollTo(0, 0); return; }
+  if (d.pmode) { S.pmode = d.pmode; S.pmore = 0; render(); return; }
+  if (d.leadOpen) { openLead(d.leadOpen); return; }
+  if (d.lead) { openLead(d.lead); return; }
+  if (d.x && !S.sheet) { openX(d.x); return; }
+  if (d.pv && !S.sheet) { openPV(d.pv); return; }
+  if (d.quick) { readLeadInputs(); applyQuick(d.quick); renderLead(); return; }
+  if (d.st) { readLeadInputs(); F.quick = null; applyStatus(d.st); renderLead(); return; }
+  if (d.temp) { readLeadInputs(); F.temp = F.temp === d.temp ? '' : d.temp; renderLead(); return; }
+  if (d.etapa) { readX(); F.etapa = F.etapa === d.etapa ? '' : d.etapa; renderX(); return; }
+  if (d.res) { readX(); F.res = F.res === d.res ? '' : d.res; renderX(); return; }
+  if (d.dtopen) {
+    if (S.sheet.type === 'lead') { readLeadInputs(); F.dtOpen = d.dtopen; renderLead(); }
+    else if (S.sheet.type === 'x') { readX(); F.dtOpen = d.dtopen; renderX(); }
+    else { readPV(); F.dtOpen = d.dtopen; renderPV(); }
+    var di = document.querySelector('[data-datein="' + d.dtopen + '"]');
+    if (di) { di.focus(); try { di.showPicker(); } catch (x) { /* fora do clique direto o navegador não abre: o campo fica visível */ } }
+    return;
+  }
+  if (d.date !== undefined && d.field) {
+    if (S.sheet.type === 'lead') { readLeadInputs(); F[d.field] = d.date; renderLead(); }
+    else if (S.sheet.type === 'x') { readX(); F[d.field] = d.date; renderX(); }
+    else { readPV(); F[d.field] = d.date; renderPV(); }
+    return;
+  }
+  if (d.pquick) {
+    readPV();
+    var q = PQUICK.filter(function (x) { return x.k === d.pquick; })[0], p = getPV(F.id);
+    if (F.quick === q.k) { F.quick = null; F.contato = false; F.proxFU = p.proxFU; F.tipoFU = p.tipoFU; F.status = p.status; }
+    else {
+      F.quick = q.k; F.contato = q.contato; F.proxFU = addDays(D.today, q.d);
+      if (q.tipo) F.tipoFU = q.tipo; else if (q.contato && (!F.tipoFU || F.tipoFU === D.fuTipos[0])) F.tipoFU = D.fuTipos[1] || F.tipoFU;
+      if (q.contato && F.status === 'Onboarding') F.status = 'Ativo';
+      if (q.k === 'problema') F.status = 'Em risco';
+      if (q.nota && !F.nota) F.nota = q.nota;
+    }
+    renderPV(); return;
+  }
+  if (d.pst) { readPV(); F.status = d.pst; renderPV(); return; }
+  if (d.sat) { readPV(); F.satisf = String(F.satisf) === d.sat ? '' : d.sat; renderPV(); return; }
+  switch (d.act) {
+    case 'close': closeSheet(); break;
+    case 'new': if (S.tab === 'prosp') openNewX(); else openNew(); break;
+    case 'saveLead': saveLead(); break;
+    case 'savePV': savePV(); break;
+    case 'saveX': saveX(false); break;
+    case 'passar': saveX(true); break;
+    case 'saveNew': saveNew(false); break;
+    case 'forceNew': saveNew(true); break;
+    case 'closed': S.closed = !S.closed; render(); break;
+    case 'more': S.pmore += 20; render(); break;
+    case 'playbook': openPlaybook(); break;
+    case 'copy': copyTxt(PB_TXT[+d.i] || ''); break;
+  }
+});
+document.addEventListener('change', function (e) {
+  if (e.target.id === 'vend') { S.vend = e.target.value; render(); }
+  if (e.target.dataset && e.target.dataset.datein) {
+    var f = e.target.dataset.datein;
+    // enquanto digita o ano (ex.: 0002), espera a data completa para não redesenhar no meio
+    if (e.target.value && e.target.value.slice(0, 4) < D.today.slice(0, 4)) return;
+    if (S.sheet.type === 'lead') { readLeadInputs(); F[f] = e.target.value; renderLead(); }
+    else if (S.sheet.type === 'x') { readX(); F[f] = e.target.value; renderX(); }
+    else { readPV(); F[f] = e.target.value; renderPV(); }
+  }
+});
+document.addEventListener('input', function (e) { if (e.target.id === 'q') { S.q = e.target.value; render(); } });
+document.addEventListener('toggle', function (e) { if (e.target.id === 'd-hist' && e.target.open) loadHist(); }, true);
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && S.sheet) closeSheet(); });
+document.getElementById('refresh').addEventListener('click', function () { refresh(false); });
+
+// arrastar entre etapas (computador)
+var dragId = null;
+document.addEventListener('dragstart', function (e) { var c = e.target.closest && e.target.closest('[data-lead]'); if (c) { dragId = c.dataset.lead; e.dataTransfer.setData('text/plain', dragId); } });
+document.addEventListener('dragover', function (e) { var c = e.target.closest && e.target.closest('[data-drop]'); if (c && dragId) { e.preventDefault(); c.classList.add('over'); } });
+document.addEventListener('dragleave', function (e) { var c = e.target.closest && e.target.closest('[data-drop]'); if (c) c.classList.remove('over'); });
+document.addEventListener('drop', function (e) {
+  var c = e.target.closest && e.target.closest('[data-drop]'); if (!c || !dragId) return;
+  e.preventDefault(); c.classList.remove('over');
+  var id = dragId, st = c.dataset.drop, l = getLead(id); dragId = null;
+  if (!l || l.status === st) return;
+  var t = (ST[st] || {}).t;
+  if (st === PERDIDO || t === 'Ganho') { openLead(id, st); return; }
+  var old = l.status; l.status = st; l.tipo = t || 'Aberto'; render();
+  call('crmUpdateLead', id, { status: st }).then(function (res) { var saiu = replaceLead(res.lead); syncProspFromLead(res.lead); render(); toast(l.nome + ' → ' + st + (saiu ? ' (passou para ' + res.lead.resp + ')' : '')); })
+    .catch(function (err) { l.status = old; render(); toast(err.message, true); });
+});
+
+// atualiza sozinho a cada 5 min e quando volta para a aba
+setInterval(function () { if (!S.sheet && document.visibilityState === 'visible') refresh(true); }, 300000);
+document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible' && !S.sheet) refresh(true); });
+
+// a primeira tela é desenhada por iniciar(), depois do login
+
+/* =====================================================================
+ * v3 · login, nova loja (prospecção), visitas, prestação de contas e acessos
+ * ===================================================================== */
+var BASE = { nome: 'Jaguariúna, SP', lat: -22.7056, lng: -46.9858 };
+var ROTAS = {
   R1: 'Rota da Porteira · RMC e Bragantina', R2: 'Rota da Serra · Sul de Minas', R3: 'Rota do Peão · Ribeirão, Franca, Barretos',
   R4: 'Rota do Triângulo · Uberaba, Uberlândia', R5: 'Rota do Noroeste · Rio Preto, Araçatuba', R6: 'Rota da Alta Paulista · Bauru, Marília, Prudente',
   R7: 'Rota do Paranapanema · Sorocaba, Itapeva, Londrina', R8: 'Rota das Araucárias · Curitiba, Ponta Grossa',
-  R9: 'Rota da Washington Luís · Jaguariúna → Rio Preto + 50 km',
+  R9: 'Rota da Washington Luís · Jaguariúna → Rio Preto + 50 km'
 };
-const ST_PROSP = ['1. A abordar', '2. Contatado', '3. Respondeu', '4. Sem retorno (pausa 60d)', '5. Sem interesse', '6. Fora do ICP', '7. Já é lead', '8. Qualificado → Pedro', '9. Virou cliente', '0. Já é cliente'];
-const ST_LEAD = ['Novo', 'Em contato', 'Qualificado', 'Catálogo enviado', 'Negociação', 'Pedido fechado', 'Nutrição', 'Perdido', 'Descartado'];
-const MOTIVOS = ['', 'Preço / margem', 'Grade fechada não serve', 'Sem retorno', 'Comprou de concorrente', 'Fora do perfil', 'Sem CNPJ / não é lojista', 'Timing (voltar depois)', 'Outro'];
-const CANAIS = ['WhatsApp', 'Telefone', 'Instagram', 'E-mail', 'Visita'];
-const SEGMENTOS = ['Multimarca country', 'Selaria / agro com vestuário', 'Boutique feminina country', 'Loja de rodeio / eventos', 'Outro'];
-const ORIGENS = ['Google Maps', 'Instagram', 'Indicação', 'Feira / Evento', 'Show Us Agroboy', 'Outro'];
+var SEGMENTOS = ['Multimarca country', 'Selaria / agro com vestuário', 'Boutique feminina country', 'Loja de rodeio / eventos', 'Outro'];
+var ORIGENS_X = ['Google Maps', 'Instagram', 'Indicação', 'Feira / Evento', 'Show Us Agroboy', 'Visita presencial', 'Outro'];
+var CATEGORIAS_DESP = ['Combustível', 'Hotel, pedágio e estacionamento', 'Alimentação', 'Manutenção do veículo'];
+var FORMAS_PAG = ['Cartão da empresa', 'Pix da empresa', 'Pago pelo Pedro (reembolso)'];
+var PRIMEIRO_PEDIDO_BASE = 3000; // Financeiro, 16/11: base R$ 3,0 mil (R$ 3,9 mil = cenário otimista)
+var MER_MIN_B2B = 6.5;           // custo de visita por 1º pedido ≤ 1º pedido ÷ 6,5
+var SIT_VISITA = ['a agendar', 'agendada', 'realizada', 'reagendar', 'cancelada'];
+var RES_VISITA = ['pedido', 'catálogo / retorno', 'sem interesse', 'reagendar', 'loja fechada'];
 
-const S = { user: null, papel: null, nome: null, perfis: [], aba: 'inicio', cache: {} };
-
-// ---------- utilidades ----------
-const $ = (s, el = document) => el.querySelector(s);
-const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-// Datas sempre no horário de Brasília (toISOString usa UTC e vira o dia depois das 21h)
-const hoje = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
-const somaDias = (n) => { const d = new Date(hoje() + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
-const dataBR = (d) => (d ? new Date(d.length === 10 ? d + 'T12:00:00' : d).toLocaleDateString('pt-BR') : '');
-const dataHoraBR = (d) => (d ? new Date(d).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '');
-const brl = (v) => (v == null || v === '' ? '' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
-const digitos = (v) => String(v ?? '').replace(/\D/g, '');
-function waLink(conta) {
-  let d = digitos(conta.whatsapp) || digitos(conta.telefone);
-  if (!d) return '';
-  if (d.length <= 11) d = '55' + d;
-  return `https://wa.me/${d}`;
-}
-function instaLink(i) { const u = String(i || '').replace(/^@/, '').replace(/^https?:\/\/(www\.)?instagram\.com\//i, '').replace(/\/.*$/, '').trim(); return u ? `https://instagram.com/${encodeURIComponent(u)}` : ''; }
-function mapsLink(c) {
-  if (/^https:\/\//i.test(c.maps_url || '')) return c.maps_url;
-  return c.endereco || c.cidade ? `https://www.google.com/maps/search/${encodeURIComponent([c.nome, c.endereco, c.cidade, c.uf].filter(Boolean).join(', '))}` : '';
-}
-function aviso(t, erro = false, ms = 3500) { const a = $('#aviso'); a.textContent = t; a.className = 'aviso' + (erro ? ' erro' : ''); a.hidden = false; clearTimeout(aviso.t); if (ms) aviso.t = setTimeout(() => (a.hidden = true), ms); }
-// Sempre inclui o valor atual nas opções, para não apagar dado que não está na lista (perfil inativo, segmento antigo etc.)
-function opts(lista, atual) {
-  const l = atual && !lista.includes(atual) ? [...lista, atual] : lista;
-  return l.map((o) => `<option ${o === atual ? 'selected' : ''} value="${esc(o)}">${esc(o || '—')}</option>`).join('');
-}
-function seloAlerta(a) { if (!a) return ''; const cls = /hoje/i.test(a) ? 'hoje' : (/abordar/i.test(a) ? '' : 'alerta'); return `<span class="selo ${cls}">${esc(a)}</span>`; }
-function seloStatus(s) { return `<span class="selo ${s === 'Pedido fechado' || s === '9. Virou cliente' || s === '0. Já é cliente' ? 'ganho' : ''}">${esc(s)}</span>`; }
-async function q(promise) { const { data, error } = await promise; if (error) { console.error(error); aviso(traduzErro(error), true); throw error; } return data; }
-function traduzErro(e) {
-  if (/row-level security|violates row-level/i.test(e.message)) return 'Você não tem permissão para essa alteração.';
-  if (/leads_um_aberto_por_conta/.test(e.message)) return 'Esta loja já tem um lead aberto.';
-  return e.message;
-}
-// Update que confere se alguma linha mudou (o RLS bloqueia em silêncio, sem erro)
-async function atualizar(tabela, dados, id) {
-  const r = await q(sb.from(tabela).update(dados).eq('id', id).select('id'));
-  if (!r.length) { aviso('Você não tem permissão para alterar este registro.', true); throw new Error('sem-permissao'); }
-  return r;
-}
-// Evita envio duplo: desabilita o botão do formulário enquanto grava
-function aoEnviar(form, fn) {
-  if (!form) return;
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const bt = form.querySelector('button[type=submit], button:not([type])');
-    if (bt?.disabled) return;
-    if (bt) bt.disabled = true;
-    try { await fn(e); S.sujo = true; } catch (err) { console.warn(err); } finally { if (bt) bt.disabled = false; }
-  });
-}
-// Célula de CSV segura para o Excel em português (sem fórmula injetada, números com vírgula)
+function podeRoteiro() { return D.papel === 'gestor' || D.papel === 'vendas'; }
+function optList(arr, sel, vazio) { return (vazio !== undefined ? '<option value="">' + esc(vazio) + '</option>' : '') + arr.map(function (x) { return '<option' + (x === sel ? ' selected' : '') + '>' + esc(x) + '</option>'; }).join(''); }
+function dataBR(iso) { if (!iso) return ''; var p = String(iso).slice(0, 10).split('-'); return p[2] + '/' + p[1] + '/' + p[0]; }
+function moneyC(v) { return v == null || v === '' ? '—' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); }
+function q(res) { if (res.error) throw new Error(traduzErro(res.error.message)); return res.data; }
+function openWide(h) { openSheet(h); document.getElementById('panel').classList.add('wide'); }
+function logoSvg() { var l = document.querySelector('.brand svg.logo'); return l ? l.outerHTML : ''; }
 function celulaCSV(v) {
   if (v == null) return '""';
-  let s = typeof v === 'number' ? String(v).replace('.', ',') : String(v);
+  var s = typeof v === 'number' ? String(v).replace('.', ',') : String(v);
   if (/^\d{4}-\d{2}-\d{2}T/.test(s)) s = new Date(s).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
   if (/^[=+@\t\r]/.test(s) || /^-[^0-9]/.test(s)) s = "'" + s;
-  return `"${s.replace(/"/g, '""')}"`;
+  return '"' + s.replace(/"/g, '""') + '"';
 }
-const podeEditarProsp = (p) => S.papel !== 'sdr' || !p.sdr || p.sdr === S.nome;
-const podeEditarLead = (l) => S.papel !== 'sdr' || l.responsavel === S.nome;
-// Guarda os filtros de cada lista para voltarem iguais depois de abrir e fechar uma ficha
-function lembrarFiltros(chave, seletores, render) {
-  S.filtros = S.filtros || {};
-  const salvos = S.filtros[chave] || {};
-  seletores.forEach((s) => {
-    const el = $(s);
-    if (s in salvos) el.value = salvos[s];
-    el.addEventListener('input', () => { (S.filtros[chave] ||= {})[s] = el.value; render(); });
+function baixarCSV(nome, linhas, cab) {
+  if (!linhas.length) { toast('Nada para exportar.', true); return; }
+  var cols = Object.keys(linhas[0]);
+  var csv = (cab ? cab + '\n\n' : '') + [cols.join(';')].concat(linhas.map(function (l) { return cols.map(function (c) { return celulaCSV(l[c]); }).join(';'); })).join('\n');
+  var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })); a.download = nome; a.click();
+}
+
+/* ---------- login ---------- */
+function telaLogin(msg) {
+  LOGADO = false;
+  document.getElementById('top').classList.add('anon');
+  document.getElementById('bnav').classList.add('hidden');
+  var v = document.getElementById('view'); v.className = '';
+  v.innerHTML = '<div class="login-wrap"><div class="lg-box">' + penaSvg() + logoSvg() +
+    '<h1>CRM Atacado</h1><p>Digite o seu e-mail de acesso. Você recebe um link para entrar: abra o e-mail neste mesmo aparelho.</p>' +
+    '<form id="fLogin" autocomplete="on"><label for="lgEmail">E-mail</label><input class="fld" id="lgEmail" type="email" autocomplete="email" required placeholder="nome@exemplo.com">' +
+    '<button class="btn primary" id="lgBtn">Receber link de acesso</button></form><div class="lg-msg" id="lgMsg">' + esc(msg || '') + '</div></div></div>';
+  document.getElementById('fLogin').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var email = document.getElementById('lgEmail').value.trim().toLowerCase(), bt = document.getElementById('lgBtn'), m = document.getElementById('lgMsg');
+    bt.disabled = true; m.textContent = 'Enviando…';
+    sb.auth.signInWithOtp({ email: email, options: { emailRedirectTo: location.origin + location.pathname, shouldCreateUser: true } }).then(function (r) {
+      bt.disabled = false;
+      if (r.error) { m.textContent = 'Não foi possível enviar: ' + (/rate|seconds/i.test(r.error.message) ? 'muitos pedidos seguidos, espere alguns minutos.' : r.error.message); return; }
+      m.innerHTML = '✓ Pronto! Abra o e-mail <b>' + esc(email) + '</b> e toque em <b>Log In</b>. Não chegou? Veja o spam.';
+    });
   });
 }
-const ehGestor = () => S.papel === 'gestor';
-const sdrs = () => S.perfis.filter((p) => p.ativo).map((p) => p.nome);
-
-// ---------- login ----------
-{
-  const hp = new URLSearchParams(location.hash.slice(1));
-  if (hp.get('error_description') || hp.get('error')) {
-    $('#login-msg').textContent = 'O link de acesso expirou ou já foi usado. Peça um novo link (ou use o código do e-mail).';
-    history.replaceState(null, '', location.pathname);
-  }
+function semAcesso(msg) {
+  var v = document.getElementById('view');
+  v.innerHTML = '<div class="login-wrap"><div class="lg-box">' + penaSvg() + logoSvg() + '<h1>Acesso não liberado</h1><p>' + esc(msg) + '</p>' +
+    '<button class="btn primary" id="sair2">Sair e entrar com outro e-mail</button></div></div>';
+  document.getElementById('sair2').onclick = sair;
 }
-$('#form-login').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const email = $('#login-email').value.trim().toLowerCase();
-  $('#login-msg').textContent = 'Enviando…';
-  const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname, shouldCreateUser: true } });
-  if (error) { $('#login-msg').textContent = 'Não foi possível enviar: ' + (/rate|seconds/i.test(error.message) ? 'muitos pedidos seguidos, espere alguns minutos.' : error.message); return; }
-  $('#login-msg').innerHTML = 'Pronto! Abra o e-mail e toque no link de acesso. <br>No app instalado no celular, digite aqui o código de 6 dígitos do e-mail:';
-  $('#form-codigo').hidden = false;
-});
-$('#form-codigo').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const email = $('#login-email').value.trim().toLowerCase();
-  const token = $('#login-codigo').value.replace(/\D/g, '');
-  const { error } = await sb.auth.verifyOtp({ email, token, type: 'email' });
-  if (error) $('#login-msg').textContent = 'Código inválido ou expirado. Peça um novo.';
-});
+function sair() { sb.auth.signOut().then(function () { location.hash = ''; location.reload(); }); }
+document.getElementById('sair').addEventListener('click', sair);
 
-let iniciado = false;
-sb.auth.onAuthStateChange((_ev, session) => {
-  if (session?.user && !iniciado) { iniciado = true; if (location.hash.includes('access_token')) history.replaceState(null, '', location.pathname); iniciar(session.user); }
-});
-
-async function iniciar(user) {
-  S.user = user;
-  const [{ data: papel }, { data: nome }] = await Promise.all([sb.rpc('meu_papel'), sb.rpc('meu_nome')]);
-  if (!papel) {
-    $('#app').innerHTML = `<section class="cartao login"><h1>Acesso não liberado</h1><p>O e-mail <b>${esc(user.email)}</b> entrou, mas ainda não tem perfil no CRM. Peça ao gestor para liberar.</p><button class="botao" id="sair2">Sair</button></section>`;
-    $('#sair2').onclick = sair; return;
-  }
-  S.papel = papel; S.nome = nome;
-  S.perfis = await q(sb.from('perfis').select('*').order('nome'));
-  $('#quem').innerHTML = `${esc(nome)} · ${esc({ gestor: 'Gestor', vendas: 'Vendas', sdr: 'Prospecção' }[papel])} <button id="sair">Sair</button>`;
-  $('#sair').onclick = sair;
-  $('#abas').hidden = false;
-  document.querySelectorAll('#abas [data-so]').forEach((b) => (b.hidden = b.dataset.so !== papel));
-  document.querySelectorAll('#abas button').forEach((b) => (b.onclick = () => irPara(b.dataset.aba)));
-  irPara(location.hash.slice(1) || 'inicio');
+function iniciar() {
+  document.getElementById('view').innerHTML = '<div class="boot"><div>' + penaSvg() + '<p>Carregando o CRM…</p></div></div>';
+  call('crmReload').then(function (nd) {
+    D = nd; indexLists(); LOGADO = true;
+    S.vend = D.admin ? 'Todos' : D.me;
+    document.getElementById('top').classList.remove('anon');
+    document.getElementById('bnav').classList.remove('hidden');
+    var h = location.hash.slice(1);
+    if (['hoje', 'funil', 'prosp', 'clientes', 'painel', 'visitas'].indexOf(h) >= 0) S.tab = h;
+    else if (hasProsp() && D.prosp.sdrs.indexOf(D.me) >= 0 && !leads().filter(function (l) { return l.tipo === 'Aberto'; }).length) S.tab = 'prosp';
+    render();
+  }).catch(function (e) { semAcesso(e.message || 'Peça ao gestor para liberar o seu e-mail.'); });
 }
-async function sair() { await sb.auth.signOut(); location.hash = ''; location.reload(); }
+(function () {
+  var hp = new URLSearchParams(location.hash.slice(1)), erro = '';
+  if (hp.get('error_description') || hp.get('error')) { erro = 'O link de acesso expirou ou já foi usado. Peça um novo abaixo.'; history.replaceState(null, '', location.pathname); }
+  var iniciado = false;
+  sb.auth.onAuthStateChange(function (ev, session) {
+    if (session && session.user) {
+      if (!iniciado) { iniciado = true; if (location.hash.indexOf('access_token') >= 0) history.replaceState(null, '', location.pathname); setTimeout(iniciar, 0); }
+    } else if (ev === 'INITIAL_SESSION' || ev === 'SIGNED_OUT') { iniciado = false; telaLogin(erro); }
+  });
+})();
 
-function irPara(aba) {
-  if (aba === 'usuarios' && !ehGestor()) aba = 'inicio';
-  S.aba = aba; location.hash = aba;
-  document.querySelectorAll('#abas button').forEach((b) => b.classList.toggle('ativa', b.dataset.aba === aba));
-  ({ inicio: telaInicio, prospeccao: telaProspeccao, leads: telaLeads, visitas: telaVisitas, usuarios: telaUsuarios }[aba] || telaInicio)();
+/* ---------- nova loja para prospectar (SDRs) ---------- */
+function openNewX() {
+  S.sheet = { type: 'newx' };
+  var h = head('Nova loja para prospectar', 'Entra na fila como "1. A abordar"') +
+    '<form class="pb" id="fNewX" autocomplete="off">' +
+    '<div class="f"><label>Nome da loja *</label><input class="fld" name="loja" required></div>' +
+    '<div class="grid2"><div class="f"><label>Cidade</label><input class="fld" name="cidade"></div>' +
+    '<div class="f"><label>UF</label><select class="fld" name="uf">' + optList(D.ufs, '', '') + '</select></div></div>' +
+    '<div class="f"><label>Telefone / WhatsApp</label><input class="fld" name="whatsapp" inputmode="tel" placeholder="(16) 99999-9999"></div>' +
+    '<div class="f"><label>Instagram</label><input class="fld" name="insta" autocapitalize="off" placeholder="@perfildaloja"></div>' +
+    '<div class="grid2"><div class="f"><label>Segmento</label><select class="fld" name="segmento">' + optList(SEGMENTOS, '', '') + '</select></div>' +
+    '<div class="f"><label>Onde encontrou</label><select class="fld" name="origem">' + optList(ORIGENS_X, 'Google Maps') + '</select></div></div>' +
+    '<div class="f"><label>Endereço</label><input class="fld" name="endereco" placeholder="Rua, número, bairro (ajuda a montar as rotas de visita)"></div>' +
+    (D.admin ? '<div class="f"><label>Quem aborda</label><select class="fld" name="sdr">' + optList(D.sellers, D.me === 'Gestor' ? '' : D.me, '— sem responsável —') + '</select></div>' : '') +
+    '<div class="f"><label>Anotação</label><textarea class="fld" name="obs" placeholder="Ex.: loja grande, trabalha com Ariat e TXC"></textarea></div>' +
+    '<div class="note">Informe o telefone ou o Instagram. Se a loja já estiver no CRM, aparece um aviso.</div><div id="dupBox"></div></form>' +
+    '<div class="pf"><button class="btn" data-act="close">Cancelar</button><button class="btn primary" data-act="saveNewX" id="btnSave">Salvar loja</button></div>';
+  openSheet(h);
 }
-
-// ---------- Início ----------
-async function telaInicio() {
-  const app = $('#app'); app.innerHTML = '<div class="cartao">Carregando…</div>';
-  const eu = S.nome;
-  const [pros, leads, vis] = await Promise.all([
-    q(sb.from('v_prospeccoes').select('id,codigo,loja,cidade,uf,status,sdr,alerta,proximo_toque,conta_id').not('alerta', 'is', null)),
-    q(sb.from('v_leads').select('id,codigo,loja,cidade,uf,status,responsavel,alerta,proxima_acao,data_proxima_acao,conta_id,tipo_status')),
-    q(sb.from('visitas').select('id,situacao,data_visita,conta_id,contas(nome,cidade)').in('situacao', ['agendada', 'a agendar', 'reagendar']).order('data_visita')),
-  ]);
-  const minhasP = pros.filter((p) => (ehGestor() ? true : p.sdr === eu || (!p.sdr && S.papel === 'sdr')) && p.alerta !== 'A abordar');
-  const aAbordar = pros.filter((p) => p.alerta === 'A abordar' && (ehGestor() || p.sdr === eu || !p.sdr));
-  const meusL = leads.filter((l) => l.tipo_status === 'Aberto' && (ehGestor() || l.responsavel === eu));
-  const atrasL = meusL.filter((l) => l.alerta);
-  const qualif = leads.filter((l) => l.status === 'Qualificado');
-  app.innerHTML = `
-    <div class="kpis">
-      <div class="kpi"><b>${minhasP.length}</b><span>Toques atrasados / hoje</span></div>
-      <div class="kpi"><b>${aAbordar.length}</b><span>Lojas a abordar</span></div>
-      <div class="kpi"><b>${atrasL.length}</b><span>Leads com ação atrasada / hoje</span></div>
-      <div class="kpi"><b>${qualif.length}</b><span>Qualificados aguardando o Pedro</span></div>
-      <div class="kpi"><b>${vis.length}</b><span>Visitas a agendar / agendadas</span></div>
-    </div>
-    <div class="colunas">
-      <div class="cartao"><h2>Meus leads para agir</h2>${listaSimples(atrasL.slice(0, 40), (l) => `${seloAlerta(l.alerta)} <b>${esc(l.loja)}</b> · ${esc(l.cidade || '')} <small>${esc(l.status)} · ${esc(l.proxima_acao || '')} (${dataBR(l.data_proxima_acao)})</small>`)}</div>
-      <div class="cartao"><h2>Minhas prospecções para tocar</h2>${listaSimples(minhasP.slice(0, 40), (p) => `${seloAlerta(p.alerta)} <b>${esc(p.loja)}</b> · ${esc(p.cidade || '')} <small>${esc(p.status)} · ${esc(p.sdr || 'sem SDR')} · próximo toque ${dataBR(p.proximo_toque)}</small>`)}</div>
-      <div class="cartao"><h2>Qualificados → Pedro</h2>${listaSimples(qualif, (l) => `<b>${esc(l.loja)}</b> · ${esc(l.cidade || '')} <small>${esc(l.proxima_acao || '')}</small>`)}</div>
-      <div class="cartao"><h2>Visitas</h2>${listaSimples(vis, (v) => `<b>${esc(v.contas?.nome)}</b> · ${esc(v.contas?.cidade || '')} <small>${esc(v.situacao)} ${v.data_visita ? '· ' + dataBR(v.data_visita) : ''}</small>`)}</div>
-    </div>`;
-  app.querySelectorAll('[data-conta]').forEach((el) => (el.onclick = () => abrirConta(el.dataset.conta)));
-}
-function listaSimples(itens, fmt) {
-  if (!itens.length) return '<p class="vazio">Nada por aqui 👍</p>';
-  return `<ul class="linha-tempo">${itens.map((i) => `<li data-conta="${i.conta_id}" style="cursor:pointer">${fmt(i)}</li>`).join('')}</ul>`;
-}
-
-// ---------- Prospecção ----------
-async function telaProspeccao() {
-  const app = $('#app');
-  const filtroSdr = S.papel === 'sdr' ? S.nome : '';
-  app.innerHTML = `
-    <div class="cartao">
-      <div class="barra">
-        <div><label>Buscar</label><input id="f-busca" placeholder="loja, cidade, @, telefone"></div>
-        <div><label>Status</label><select id="f-status"><option value="">Todos (abertos)</option><option value="*">Todos</option>${opts(ST_PROSP)}</select></div>
-        <div><label>SDR</label><select id="f-sdr"><option value="">Todos</option><option value="-">Sem SDR</option>${opts(sdrs(), filtroSdr)}</select></div>
-        <div><label>Rota</label><select id="f-rota"><option value="">Todas</option>${Object.keys(ROTAS).map((r) => `<option value="${r}">${r} · ${esc(ROTAS[r].split(' · ')[0])}</option>`).join('')}</select></div>
-        <div><label>Alerta</label><select id="f-alerta"><option value="">Todos</option><option>Toque atrasado</option><option>Toque hoje</option><option>A abordar</option><option>Voltar a abordar</option></select></div>
-        <div class="acoes"><button class="primario" id="nova-prosp">+ Nova prospecção</button></div>
-      </div>
-    </div>
-    <div class="contagem" id="cont"></div><div id="lista">Carregando…</div>`;
-  const dados = await q(sb.from('v_prospeccoes').select('*').order('proximo_toque', { ascending: true, nullsFirst: false }));
-  S.cache.prosp = dados;
-  const render = () => {
-    const b = $('#f-busca').value.toLowerCase(); const st = $('#f-status').value; const sd = $('#f-sdr').value; const ro = $('#f-rota').value; const al = $('#f-alerta').value;
-    const fech = ['5. Sem interesse', '6. Fora do ICP', '7. Já é lead', '9. Virou cliente', '0. Já é cliente'];
-    const f = dados.filter((p) => (st === '*' ? true : st ? p.status === st : !fech.includes(p.status))
-      && (!sd || (sd === '-' ? !p.sdr : p.sdr === sd)) && (!ro || p.rota === ro) && (!al || p.alerta === al)
-      && (!b || [p.loja, p.cidade, p.instagram, p.telefone, p.whatsapp, p.codigo, p.decisor].join(' ').toLowerCase().includes(b)));
-    $('#cont').textContent = `${f.length} prospecções`;
-    $('#lista').innerHTML = f.length ? `<div class="rolagem"><table class="tabela"><thead><tr><th>Loja</th><th>Cidade</th><th>Status</th><th class="oculta-cel">SDR</th><th class="oculta-cel">Próximo toque</th><th>Alerta</th><th class="oculta-cel">Rota</th></tr></thead><tbody>
-      ${f.map((p) => `<tr class="clicavel" data-conta="${esc(p.conta_id)}"><td><b>${esc(p.loja)}</b><br><small>${esc(p.codigo)} · ${esc(p.tier || '')} ${esc(p.segmento || '')}</small></td><td>${esc(p.cidade || '')}/${esc(p.uf || '')}</td><td>${seloStatus(p.status)}</td><td class="oculta-cel">${esc(p.sdr || '—')}</td><td class="oculta-cel">${dataBR(p.proximo_toque)}</td><td>${seloAlerta(p.alerta)}</td><td class="oculta-cel">${p.rota ? `<span class="selo r">${esc(p.rota)}</span>` : ''}</td></tr>`).join('')}
-      </tbody></table></div>` : '<div class="cartao vazio">Nenhuma prospecção com esses filtros.</div>';
-    $('#lista').querySelectorAll('[data-conta]').forEach((tr) => (tr.onclick = () => abrirConta(tr.dataset.conta)));
-  };
-  lembrarFiltros('prosp', ['#f-busca', '#f-status', '#f-sdr', '#f-rota', '#f-alerta'], render);
-  $('#nova-prosp').onclick = novaProspeccao;
-  render();
-}
-
-async function novaProspeccao() {
-  abrirModal(`
-    <h2>+ Nova prospecção</h2>
-    <form id="fnp" class="grade">
-      <div class="largo"><label>Nome da loja *</label><input name="nome" required></div>
-      <div><label>Cidade *</label><input name="cidade" required></div>
-      <div><label>UF *</label><input name="uf" maxlength="2" required></div>
-      <div><label>WhatsApp</label><input name="whatsapp" placeholder="(17) 99999-9999"></div>
-      <div><label>Telefone fixo</label><input name="telefone"></div>
-      <div><label>Instagram</label><input name="instagram" placeholder="@loja"></div>
-      <div><label>CNPJ</label><input name="cnpj"></div>
-      <div class="largo"><label>Endereço</label><input name="endereco"></div>
-      <div><label>Segmento</label><select name="segmento">${opts(SEGMENTOS, 'Multimarca country')}</select></div>
-      <div><label>Tier</label><select name="tier">${opts(['A', 'B', 'C'], 'B')}</select></div>
-      <div><label>Origem</label><select name="origem">${opts(ORIGENS, 'Google Maps')}</select></div>
-      <div><label>Rota</label><select name="rota"><option value="">—</option>${Object.keys(ROTAS).map((r) => `<option value="${r}">${r} · ${esc(ROTAS[r].split(' · ')[0])}</option>`).join('')}</select></div>
-      <div><label>SDR responsável</label><select name="sdr">${opts(S.papel === 'sdr' ? [S.nome] : sdrs(), S.nome)}</select></div>
-      <div class="largo"><label>Link do Google Maps (opcional)</label><input name="maps_url"></div>
-      <div class="largo"><label>Anotações</label><textarea name="anotacoes"></textarea></div>
-      <div class="largo" id="dup"></div>
-      <div class="largo"><button class="primario" type="submit">Salvar prospecção</button></div>
-    </form>`);
-  const f = $('#fnp');
-  const checar = async () => {
-    const wa = digitos(f.whatsapp.value); const ig = f.instagram.value.replace('@', '').trim(); const nome = f.nome.value.trim();
-    // valores entre aspas: vírgula ou parênteses no nome não quebram o filtro
-    const lit = (s) => '"' + String(s).replace(/["\\%_]/g, '') + '"';
-    const filtros = [];
-    const contem = (s) => '"%' + lit(s).slice(1, -1) + '%"';
-    if (wa.length >= 10) {
-      const f8 = wa.slice(-8); // WhatsApp guardado só com dígitos; telefone guardado formatado "(17) 99145-9265"
-      filtros.push(`whatsapp.ilike.${contem(f8)}`, `telefone.ilike.${contem(f8.slice(0, 4) + '-' + f8.slice(4))}`);
+function saveNewX(force) {
+  var f = {}; new FormData(document.getElementById('fNewX')).forEach(function (v, k) { f[k] = String(v).trim(); });
+  if (!f.loja) { toast('Informe o nome da loja.', true); return; }
+  if (!f.whatsapp && !f.insta) { toast('Informe o telefone ou o Instagram da loja.', true); return; }
+  if (force) f.forcar = true;
+  var btn = document.getElementById('btnSave'); busy(btn, true);
+  call('crmAddProsp', f).then(function (res) {
+    busy(btn, false, 'Salvar loja');
+    if (res.duplicate) {
+      var abre = res.visivel && (res.tipo === 'prosp' ? getX(res.id) : getLead(res.id));
+      document.getElementById('dupBox').innerHTML = '<div class="warn">Essa loja já está no CRM: <b>' + esc(res.id) + ' · ' + esc(res.loja) + '</b> (' + esc(res.status) + (res.resp ? ', com ' + esc(res.resp) : '') + ').' +
+        '<div class="chips" style="margin-top:8px">' + (abre ? '<button class="chip" data-abre="' + esc(res.tipo) + ':' + esc(res.id) + '">Abrir a ficha</button>' : '') +
+        '<button class="chip" data-act="forceNewX">Salvar mesmo assim</button></div></div>';
+      document.getElementById('dupBox').scrollIntoView({ behavior: 'smooth' });
+      return;
     }
-    if (ig) filtros.push(`instagram.ilike.${contem(ig)}`);
-    if (nome.length >= 4) filtros.push(`nome.ilike.${contem(nome)}`);
-    if (!filtros.length) { $('#dup').innerHTML = ''; return []; }
-    const { data, error } = await sb.from('contas').select('id,nome,cidade,uf').or(filtros.join(',')).limit(5);
-    if (error) { $('#dup').innerHTML = '<div class="dup">Não foi possível checar duplicatas. Confira antes de salvar.</div>'; return []; }
-    $('#dup').innerHTML = data?.length ? `<div class="dup">⚠️ Possível duplicata: ${data.map((d) => `<a href="#" data-conta="${d.id}">${esc(d.nome)} (${esc(d.cidade || '')})</a>`).join(', ')}. Confira antes de salvar.</div>` : '';
-    $('#dup').querySelectorAll('[data-conta]').forEach((a) => (a.onclick = (e) => { e.preventDefault(); abrirConta(a.dataset.conta); }));
-    return data || [];
-  };
-  ['nome', 'whatsapp', 'instagram'].forEach((n) => f[n].addEventListener('change', checar));
-  aoEnviar(f, async () => {
-    const d = Object.fromEntries(new FormData(f));
-    let wa = digitos(d.whatsapp); if (wa && wa.length <= 11) wa = '55' + wa;
-    const conta = await q(sb.from('contas').insert({ nome: d.nome.trim(), cidade: d.cidade.trim(), uf: d.uf.trim().toUpperCase(), whatsapp: wa || null, telefone: d.telefone || null, instagram: d.instagram || null, cnpj: d.cnpj || null, endereco: d.endereco || null, segmento: d.segmento, tier: d.tier, origem: d.origem, rota: d.rota || null, maps_url: d.maps_url || null, criado_por: S.user.email }).select('id').single());
-    await q(sb.from('prospeccoes').insert({ conta_id: conta.id, status: '1. A abordar', sdr: d.sdr, anotacoes: d.anotacoes || null, proximo_toque: hoje(), incluida_em: `${S.nome} · ${dataBR(hoje())}`, criado_por: S.user.email }));
-    aviso('Prospecção criada.'); S.sujo = true; abrirConta(conta.id);
-  });
+    upsertX(res.prosp); closeSheet(); S.tab = 'prosp'; S.pmode = 'novas'; S.q = ''; render();
+    toast('Loja ' + res.id + ' incluída na fila ✓');
+  }).catch(function (e) { busy(btn, false, 'Salvar loja'); toast(e.message || 'Não consegui salvar', true); });
 }
 
-// ---------- Leads ----------
-async function telaLeads() {
-  const app = $('#app');
-  app.innerHTML = `
-    <div class="cartao"><div class="barra">
-      <div><label>Buscar</label><input id="f-busca" placeholder="loja, contato, cidade, telefone"></div>
-      <div><label>Status</label><select id="f-status"><option value="">Abertos</option><option value="*">Todos</option>${opts(ST_LEAD)}</select></div>
-      <div><label>Responsável</label><select id="f-resp"><option value="">Todos</option>${opts(sdrs(), S.papel === 'vendas' ? S.nome : '')}</select></div>
-      <div><label>Alerta</label><select id="f-alerta"><option value="">Todos</option><option>Ação atrasada</option><option>Ação hoje</option><option>Sem 1º contato</option></select></div>
-      <div class="acoes"><button class="primario" id="novo-lead">+ Novo lead</button></div>
-    </div></div>
-    <div class="contagem" id="cont"></div><div id="lista">Carregando…</div>`;
-  const dados = await q(sb.from('v_leads').select('*').order('data_proxima_acao', { ascending: true, nullsFirst: false }));
-  const render = () => {
-    const b = $('#f-busca').value.toLowerCase(); const st = $('#f-status').value; const rs = $('#f-resp').value; const al = $('#f-alerta').value;
-    const f = dados.filter((l) => (st === '*' ? true : st ? l.status === st : l.tipo_status === 'Aberto') && (!rs || l.responsavel === rs) && (!al || l.alerta === al)
-      && (!b || [l.loja, l.contato_nome, l.cidade, l.whatsapp, l.telefone, l.codigo, l.email].join(' ').toLowerCase().includes(b)));
-    $('#cont').textContent = `${f.length} leads`;
-    $('#lista').innerHTML = f.length ? `<div class="rolagem"><table class="tabela"><thead><tr><th>Loja / contato</th><th>Status</th><th class="oculta-cel">Responsável</th><th>Próxima ação</th><th>Alerta</th><th class="oculta-cel">Temperatura</th><th class="oculta-cel">Origem</th></tr></thead><tbody>
-      ${f.map((l) => `<tr class="clicavel" data-conta="${esc(l.conta_id)}"><td><b>${esc(l.loja)}</b><br><small>${esc(l.codigo)} · ${esc(l.contato_nome || '')} · ${esc(l.cidade || '')}${l.uf ? '/' + esc(l.uf) : ''}</small></td><td>${seloStatus(l.status)}</td><td class="oculta-cel">${esc(l.responsavel || '')}</td><td>${esc(l.proxima_acao || '')}<br><small>${dataBR(l.data_proxima_acao)}</small></td><td>${seloAlerta(l.alerta)}</td><td class="oculta-cel">${l.temperatura ? `<span class="selo ${l.temperatura === 'Quente' ? 'quente' : ''}">${esc(l.temperatura)}</span>` : ''}</td><td class="oculta-cel"><small>${esc(l.origem || '')}</small></td></tr>`).join('')}
-      </tbody></table></div>` : '<div class="cartao vazio">Nenhum lead com esses filtros.</div>';
-    $('#lista').querySelectorAll('[data-conta]').forEach((tr) => (tr.onclick = () => abrirConta(tr.dataset.conta)));
-  };
-  lembrarFiltros('leads', ['#f-busca', '#f-status', '#f-resp', '#f-alerta'], render);
-  $('#novo-lead').onclick = novoLead;
-  render();
+/* ---------- visita presencial e rota, dentro da ficha ---------- */
+function visBlock() { return '<details id="d-vis"><summary>📍 Visita presencial e rota</summary><div id="visBox">' + visHtml() + '</div></details>'; }
+function visHtml() {
+  if (!F || !F.conta) return '';
+  if (!F.vis) return '<p class="note">Toque para carregar…</p>';
+  var c = F.vis.conta || {}, rows = F.vis.rows || [];
+  var h = '<div class="f"><label>Rota de visita</label><select class="fld" id="vis-rota"><option value="">— fora das rotas —</option>' +
+    Object.keys(ROTAS).map(function (r) { return '<option value="' + r + '"' + (c.rota === r ? ' selected' : '') + '>' + r + ' · ' + esc(ROTAS[r]) + '</option>'; }).join('') + '</select></div>' +
+    (c.endereco ? '<div class="note"><b>Endereço:</b> ' + esc(c.endereco) + '</div>' : '<div class="note">Sem endereço: a rota usa o centro da cidade. Anote o endereço para o roteiro ficar certo.</div>');
+  h += '<div class="lbl">Visitas</div>' + (rows.length ? rows.map(function (v) {
+    var edit = F.visEdit === v.id;
+    return '<div class="vrow"><div><b>' + esc(v.situacao) + '</b> ' + (v.data_visita ? dataBR(v.data_visita) : '') + ' ' + esc(v.hora || '') +
+      (v.resultado ? ' · ' + esc(v.resultado) : '') + (v.valor_pedido ? ' · ' + moneyC(v.valor_pedido) : '') + (v.roteiro_id ? ' · em roteiro' : '') +
+      '<br><small>' + esc(v.observacoes || '') + (v.agendado_por ? ' · pedida por ' + esc(v.agendado_por) : '') + '</small></div>' +
+      '<button class="chip" data-visedit="' + esc(v.id) + '">' + (edit ? 'Fechar' : 'Atualizar') + '</button></div>' +
+      (edit ? '<div class="qbox"><div class="fgrid">' +
+        '<div><label>Situação</label><select class="fld" id="ve-sit">' + optList(SIT_VISITA, v.situacao) + '</select></div>' +
+        '<div><label>Resultado</label><select class="fld" id="ve-res">' + optList(RES_VISITA, v.resultado || '', '—') + '</select></div>' +
+        '<div><label>Data</label><input class="fld" type="date" id="ve-data" value="' + esc(v.data_visita || '') + '"></div>' +
+        '<div><label>Hora</label><input class="fld" id="ve-hora" value="' + esc(v.hora || '') + '" placeholder="10:30"></div>' +
+        '<div class="full"><label>Valor do pedido (R$)</label><input class="fld" id="ve-valor" inputmode="decimal" value="' + esc(v.valor_pedido == null ? '' : v.valor_pedido) + '"></div>' +
+        '<div class="full"><label>Observações</label><input class="fld" id="ve-obs" value="' + esc(v.observacoes || '') + '"></div></div>' +
+        '<button class="btn dark" style="width:100%;margin-top:8px" data-act="visEditSave" data-id="' + esc(v.id) + '">Salvar visita</button></div>' : '');
+  }).join('') : '<p class="note">Nenhuma visita ainda.</p>');
+  h += '<div class="lbl">Pedir ou agendar visita</div><div class="fgrid">' +
+    '<div><label>Situação</label><select class="fld" id="vn-sit">' + optList(['a agendar', 'agendada'], 'a agendar') + '</select></div>' +
+    '<div><label>Data</label><input class="fld" type="date" id="vn-data" min="' + D.today + '"></div>' +
+    '<div><label>Hora</label><input class="fld" id="vn-hora" placeholder="10:30"></div>' +
+    '<div><label>Observação</label><input class="fld" id="vn-obs" placeholder="Ex.: dona atende à tarde"></div></div>' +
+    '<button class="btn" style="width:100%;margin-top:8px" data-act="visNew">+ Registrar pedido de visita</button>' +
+    '<div class="note">O ' + esc((D.prosp && D.prosp.closer) || 'Pedro') + ' vê o pedido na aba Visitas e encaixa no roteiro da rota.</div>';
+  return h;
 }
-function novoLead() {
-  abrirModal(`<h2>+ Novo lead</h2><form id="fnl" class="grade">
-    <div class="largo"><label>Loja *</label><input name="nome" required></div>
-    <div><label>Contato</label><input name="contato"></div><div><label>WhatsApp</label><input name="whatsapp"></div>
-    <div><label>E-mail</label><input name="email" type="email"></div><div><label>Cidade</label><input name="cidade"></div><div><label>UF</label><input name="uf" maxlength="2"></div>
-    <div><label>Origem</label><select name="origem">${opts(['WhatsApp', 'Instagram', 'Indicação', 'Representante', 'Feira / Evento', 'Site – LP B2B', 'Outro'], 'WhatsApp')}</select></div>
-    <div><label>Responsável</label><select name="resp">${opts(S.papel === 'sdr' ? [S.nome] : sdrs(), S.nome)}</select></div>
-    <div class="largo"><label>Observações</label><textarea name="obs"></textarea></div>
-    <div class="largo"><button class="primario">Salvar lead</button></div></form>`);
-  aoEnviar($('#fnl'), async (e) => {
-    const d = Object.fromEntries(new FormData(e.target));
-    let wa = digitos(d.whatsapp); if (wa && wa.length <= 11) wa = '55' + wa;
-    const c = await q(sb.from('contas').insert({ nome: d.nome, cidade: d.cidade || null, uf: (d.uf || '').toUpperCase() || null, whatsapp: wa || null, email: d.email || null, origem: d.origem, criado_por: S.user.email }).select('id').single());
-    await q(sb.from('leads').insert({ conta_id: c.id, contato_nome: d.contato || null, email: d.email || null, origem: d.origem, responsavel: d.resp, status: 'Novo', observacoes: d.obs || null, proxima_acao: 'Fazer 1º contato', data_proxima_acao: hoje(), criado_por: S.user.email }));
-    aviso('Lead criado.'); S.sujo = true; abrirConta(c.id);
-  });
+function loadVis(force) {
+  if (!F || !F.conta || (F.vis && !force)) return;
+  var conta = F.conta, fid = F.id;
+  Promise.all([
+    sb.from('visitas').select('*').eq('conta_id', conta).order('criado_em', { ascending: false }),
+    sb.from('contas').select('id,nome,rota,endereco,cidade,uf').eq('id', conta).single()
+  ]).then(function (r) {
+    if (!F || F.id !== fid) return;
+    F.vis = { rows: q(r[0]), conta: q(r[1]) };
+    var el = document.getElementById('visBox'); if (el) el.innerHTML = visHtml();
+  }).catch(function (e) { toast(e.message, true); });
+}
+function visRefresh() { var el = document.getElementById('visBox'); if (el) el.innerHTML = visHtml(); }
+
+/* ---------- loja sem ficha na sua carteira (ex.: aba Visitas) ---------- */
+function openConta(id) {
+  var aberto = D.leads.filter(function (l) { return l.conta === id && l.tipo === 'Aberto'; })[0];
+  var lead = aberto || D.leads.filter(function (l) { return l.conta === id; })[0];
+  var x = D.prosp ? D.prosp.rows.filter(function (z) { return z.conta === id; })[0] : null;
+  var p = D.pv.filter(function (z) { return z.conta === id; })[0];
+  closeSheet();
+  if (aberto) return openLead(aberto.id);
+  if (p) return openPV(p.id);
+  if (x) return openX(x.id);
+  if (lead) return openLead(lead.id);
+  sb.from('contas').select('*').eq('id', id).single().then(function (r) {
+    var c = q(r), vc = (S.vcache || {}), px = (vc.mp || {})[id], lx = (vc.ml || {})[id];
+    S.sheet = { type: 'conta', id: id };
+    F = { id: 'conta:' + id, conta: id, vis: null };
+    var h = head(c.nome, [c.cidade, c.uf].filter(Boolean).join('/')) + '<div class="pb">' +
+      contactRow(c.whatsapp || c.telefone, '', c.email, waUrl(c.whatsapp || c.telefone, ''), igUrl(c.instagram), mapUrl(c.nome, c.cidade, c.uf)) +
+      '<div class="meta">' + (px ? pill(px.status, XST) : '') + (lx ? pill(lx.status) : '') + (c.segmento ? '<span class="tag">' + esc(c.segmento) + '</span>' : '') + '</div>' +
+      '<div class="note">' + (px && px.sdr ? 'Prospecção ' + esc(px.codigo) + ' com ' + esc(px.sdr) + '. ' : '') + (lx ? 'Lead ' + esc(lx.codigo) + (lx.responsavel ? ' com ' + esc(lx.responsavel) : '') + '. ' : '') +
+      'A ficha completa fica com quem cuida da loja.</div>' + visBlock() + '</div>';
+    openSheet(h);
+    var d = document.getElementById('d-vis'); if (d) { d.open = true; loadVis(); }
+  }).catch(function (e) { toast(e.message, true); });
 }
 
-// ---------- Ficha da conta ----------
-async function abrirConta(contaId) {
-  abrirModal('<p>Carregando…</p>');
-  const [c, pros, leads, inter, vis] = await Promise.all([
-    q(sb.from('contas').select('*').eq('id', contaId).single()),
-    q(sb.from('prospeccoes').select('*').eq('conta_id', contaId).order('criado_em', { ascending: false })),
-    q(sb.from('leads').select('*').eq('conta_id', contaId).order('criado_em', { ascending: false })),
-    q(sb.from('interacoes').select('*').eq('conta_id', contaId).order('quando', { ascending: false }).limit(200)),
-    q(sb.from('visitas').select('*').eq('conta_id', contaId).order('criado_em', { ascending: false })),
-  ]);
-  const p = pros[0]; const l = leads[0];
-  // O SDR não enxerga leads de outros: avisa que a loja já tem lead em vez de oferecer criar outro
-  let leadOculto = null;
-  if (!l) { const { data } = await sb.rpc('lead_aberto_da_conta', { p_conta: contaId }); leadOculto = data?.[0] || null; }
-  const links = [
-    waLink(c) && `<a target="_blank" rel="noopener" href="${esc(waLink(c))}">💬 WhatsApp</a>`,
-    c.telefone && `<a href="tel:${esc(digitos(c.telefone))}">📞 ${esc(c.telefone)}</a>`,
-    instaLink(c.instagram) && `<a target="_blank" rel="noopener" href="${esc(instaLink(c.instagram))}">📸 ${esc(c.instagram)}</a>`,
-    mapsLink(c) && `<a target="_blank" rel="noopener" href="${esc(mapsLink(c))}">📍 Maps</a>`,
-  ].filter(Boolean).join('');
-  const blocoLead = l ? fichaLead(l)
-    : leadOculto ? `<div class="cartao"><h2>Lead ${esc(leadOculto.codigo)}</h2><p>Esta loja já tem lead aberto com <b>${esc(leadOculto.responsavel || '—')}</b> (${esc(leadOculto.status)}).</p></div>`
-    : S.papel === 'sdr' ? '' : `<div class="cartao"><button class="botao" id="criar-lead">Criar lead para esta loja</button></div>`;
-  $('#modal-corpo').innerHTML = `
-    <h1>${esc(c.nome)}</h1>
-    <div>${esc(c.cidade || '')}${c.uf ? '/' + esc(c.uf) : ''} ${c.rota ? `· <span class="selo r">${esc(c.rota)}</span> ${esc(ROTAS[c.rota] || '')}` : ''} ${c.nota_google ? `· ⭐ ${esc(c.nota_google)} (${esc(c.avaliacoes || 0)})` : ''}</div>
-    <div class="links">${links}</div>
-    <div class="colunas">
-      <div>
-        <div class="cartao"><h2>Registrar contato</h2>
-          <form id="f-toque" class="grade">
-            <div><label>Canal</label><select name="canal">${opts(CANAIS, S.papel === 'vendas' ? 'Telefone' : 'WhatsApp')}</select></div>
-            <div><label>Próximo contato</label><input type="date" name="proximo" value="${somaDias(3)}"></div>
-            <div class="largo"><label>O que aconteceu</label><textarea name="texto" required placeholder="Ex.: falei com o dono, pediu catálogo; volta segunda"></textarea></div>
-            <div class="largo"><button class="primario">Salvar contato</button></div>
-          </form>
-        </div>
-        ${p ? fichaProsp(p) : `<div class="cartao"><button class="botao" id="criar-prosp">Criar prospecção para esta loja</button></div>`}
-        ${blocoLead}
-      </div>
-      <div>
-        ${fichaVisitas(vis)}
-        <div class="cartao"><h2>Histórico</h2><ul class="linha-tempo">${inter.map((i) => `<li><b>${esc(i.evento || i.canal || i.tipo)}</b>${i.de || i.para ? ` · ${esc(i.de || '')} → ${esc(i.para || '')}` : ''}${i.texto ? `<br>${esc(i.texto)}` : ''}<small>${dataHoraBR(i.quando)} · ${esc(i.por || '')}${i.canal ? ' · ' + esc(i.canal) : ''}</small></li>`).join('') || '<li class="vazio">Sem histórico</li>'}</ul></div>
-        ${fichaConta(c, p)}
-      </div>
-    </div>`;
-  ligarFicha(c, p, l, vis);
+/* ---------- aba Visitas: lojas da rota, roteiro e prestação de contas ---------- */
+function viewVisitas() {
+  return '<h1>Visitas</h1><div class="date">Rotas presenciais · saída de Jaguariúna</div><div id="visRoot"><div class="boot"><div>' + penaSvg() + '<p>Carregando as lojas da rota…</p></div></div></div>';
 }
-function somenteLeitura(pode, aviso) { return pode ? '' : `<p class="dup">${aviso}</p>`; }
-function fichaProsp(p) {
-  const pode = podeEditarProsp(p);
-  const opcoesSdr = S.papel === 'sdr' ? [S.nome] : sdrs();
-  return `<div class="cartao"><h2>Prospecção ${esc(p.codigo)}</h2>${somenteLeitura(pode, `Prospecção do SDR ${esc(p.sdr)}: só leitura para você.`)}
-  <form id="f-prosp" class="grade"><fieldset ${pode ? '' : 'disabled'} style="border:0;padding:0;margin:0;display:contents">
-    <div class="largo"><label>Status</label><select name="status">${opts(ST_PROSP, p.status)}</select></div>
-    <div><label>SDR</label><select name="sdr"><option value="">—</option>${opts(opcoesSdr, p.sdr)}</select></div>
-    <div><label>Próximo toque</label><input type="date" name="proximo_toque" value="${esc(p.proximo_toque || '')}"></div>
-    <div><label>Último toque</label><input type="date" name="ultimo_toque" value="${esc(p.ultimo_toque || '')}"></div>
-    <div><label>Decisor</label><input name="decisor" value="${esc(p.decisor)}"></div>
-    <div><label>Marcas que trabalha</label><input name="marcas" value="${esc(p.marcas)}"></div>
-    <div><label>Público</label><input name="publico" value="${esc(p.publico)}"></div>
-    <div><label>Época de compra</label><input name="epoca_compra" value="${esc(p.epoca_compra)}"></div>
-    <div><label>Respondeu por</label><select name="respondeu_por">${opts(['', ...CANAIS], p.respondeu_por || '')}</select></div>
-    <div class="largo"><label>Próximo passo</label><input name="proximo_passo" value="${esc(p.proximo_passo)}"></div>
-    <div class="largo"><label>Anotações</label><textarea name="anotacoes">${esc(p.anotacoes)}</textarea></div>
-    ${pode ? '<div class="largo"><button class="primario">Salvar prospecção</button> <small>“8. Qualificado → Pedro” cria ou atualiza o lead do Pedro automaticamente.</small></div>' : ''}
-  </fieldset></form></div>`;
+function loadVisitas() {
+  var rota = S.rota || 'R9', filtro = S.vfiltro || 'todas';
+  Promise.all([
+    sb.from('contas').select('id,nome,cidade,uf,endereco,whatsapp,telefone,lat,lng,rota').eq('rota', rota).order('cidade'),
+    sb.from('v_prospeccoes').select('conta_id,codigo,status,sdr').eq('rota', rota),
+    sb.from('v_leads').select('conta_id,codigo,status,tipo_status,responsavel').eq('rota', rota),
+    sb.from('visitas').select('*').in('situacao', ['a agendar', 'agendada', 'reagendar'])
+  ]).then(function (r) {
+    var root = document.getElementById('visRoot'); if (!root || S.tab !== 'visitas') return;
+    var contas = q(r[0]), pros = q(r[1]), lds = q(r[2]), vis = q(r[3]);
+    var mp = {}, ml = {}, mv = {};
+    pros.forEach(function (p) { mp[p.conta_id] = p; });
+    lds.forEach(function (l) { if (!ml[l.conta_id] || l.tipo_status === 'Aberto') ml[l.conta_id] = l; });
+    vis.forEach(function (v) { if (!mv[v.conta_id] || !v.roteiro_id) mv[v.conta_id] = v; });
+    var lista = contas.filter(function (c) { return ['6. Fora do ICP', '5. Sem interesse'].indexOf((mp[c.id] || {}).status) < 0; });
+    if (filtro === 'agendadas') lista = lista.filter(function (c) { return mv[c.id]; });
+    if (filtro === 'quentes') lista = lista.filter(function (c) {
+      var l = ml[c.id] || {}, p = mp[c.id] || {};
+      return l.tipo_status === 'Aberto' || l.status === 'Pedido fechado' || ['8. Qualificado → Pedro', '0. Já é cliente', '9. Virou cliente'].indexOf(p.status) >= 0;
+    });
+    S.vcache = { lista: lista, mp: mp, ml: ml, mv: mv };
+    var pode = podeRoteiro();
+    var h = '<div class="vis-bar"><div><label>Rota</label><select class="fld" id="vRota">' +
+      Object.keys(ROTAS).map(function (k) { return '<option value="' + k + '"' + (k === rota ? ' selected' : '') + '>' + k + ' · ' + esc(ROTAS[k]) + '</option>'; }).join('') + '</select></div>' +
+      '<div><label>Mostrar</label><select class="fld" id="vFiltro">' +
+      [['todas', 'Todas as lojas da rota'], ['agendadas', 'Só com visita pedida ou agendada'], ['quentes', 'Clientes, qualificados e leads abertos']].map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === filtro ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select></div>' +
+      (pode ? '<div><button class="btn primary" data-act="montar" id="btnMontar">Montar roteiro com as marcadas</button></div>' : '') + '</div>' +
+      '<p class="hint" style="color:var(--muted);font-size:13px;margin:-4px 0 12px">' + (pode
+        ? 'Marque as lojas e monte o roteiro: a ordem sai de Jaguariúna pela loja mais próxima. Endereços sem coordenada são localizados uma vez (OpenStreetMap) e ficam salvos.'
+        : 'Peça visitas pela ficha de cada loja; o ' + esc((D.prosp && D.prosp.closer) || 'Pedro') + ' monta o roteiro.') + '</p>';
+    h += lista.length ? '<section class="sec"><h2>Lojas da rota <span class="n">' + lista.length + '</span></h2><div class="list two">' + lista.map(function (c) {
+      var p = mp[c.id], l = ml[c.id], v = mv[c.id];
+      return '<article class="card' + (v && !v.roteiro_id ? ' c-orange' : '') + '" data-vconta="' + esc(c.id) + '">' +
+        (pode ? '<input type="checkbox" class="ck v-marca" value="' + esc(c.id) + '"' + (v && !v.roteiro_id ? ' checked' : '') + ' aria-label="Incluir no roteiro">' : '') +
+        '<div class="cm"><div class="ct"><b>' + esc(c.nome) + '</b>' + (l ? pill(l.status) : p ? pill(p.status, XST) : '') + '</div>' +
+        '<div class="cs">' + esc([c.cidade, c.uf].filter(Boolean).join('/')) + (c.endereco ? ' · ' + esc(c.endereco) : ' · sem endereço') + '</div>' +
+        '<div class="cn ' + (v ? 't-orange' : 't-muted') + '">' + (v ? 'Visita ' + esc(v.situacao) + (v.data_visita ? ' · ' + br(v.data_visita) : '') + (v.hora ? ' ' + esc(v.hora) : '') + (v.roteiro_id ? ' · em roteiro' : '') :
+          (p && p.sdr ? 'SDR ' + esc(p.sdr) : '') + (l && l.responsavel ? (p && p.sdr ? ' · ' : '') + 'lead com ' + esc(l.responsavel) : '')) + '</div></div></article>';
+    }).join('') + '</div></section>' : '<div class="empty">' + penaSvg() + '<p>Nenhuma loja nesta rota com esse filtro.</p></div>';
+    h += '<div id="vRots"></div>';
+    root.innerHTML = h;
+    loadRoteiros();
+  }).catch(function (e) { toast(e.message, true); });
 }
-function fichaLead(l) {
-  const pode = podeEditarLead(l);
-  const opcoesResp = S.papel === 'sdr' ? [...new Set([S.nome, 'Pedro'])] : sdrs();
-  return `<div class="cartao"><h2>Lead ${esc(l.codigo)}</h2>${somenteLeitura(pode, `Lead com ${esc(l.responsavel || '—')}: só leitura para você.`)}
-  <form id="f-lead" class="grade"><fieldset ${pode ? '' : 'disabled'} style="border:0;padding:0;margin:0;display:contents">
-    <div><label>Status</label><select name="status">${opts(ST_LEAD, l.status)}</select></div>
-    <div><label>Responsável</label><select name="responsavel">${opts(opcoesResp, l.responsavel)}</select></div>
-    <div><label>Temperatura</label><select name="temperatura">${opts(['', 'Quente', 'Morno', 'Frio'], l.temperatura || '')}</select></div>
-    <div><label>Contato</label><input name="contato_nome" value="${esc(l.contato_nome)}"></div>
-    <div class="largo"><label>Próxima ação</label><input name="proxima_acao" value="${esc(l.proxima_acao)}"></div>
-    <div><label>Data da próxima ação</label><input type="date" name="data_proxima_acao" value="${esc(l.data_proxima_acao || '')}"></div>
-    <div><label>Potencial (R$)</label><input type="number" step="0.01" name="potencial" value="${esc(l.potencial ?? '')}"></div>
-    <div><label>Valor 1º pedido (R$)</label><input type="number" step="0.01" name="valor_primeiro_pedido" value="${esc(l.valor_primeiro_pedido ?? '')}"></div>
-    <div><label>Motivo de perda</label><select name="motivo_perda">${opts(MOTIVOS, l.motivo_perda || '')}</select></div>
-    <div class="largo"><label>Observações</label><textarea name="observacoes">${esc(l.observacoes)}</textarea></div>
-    <div class="largo"><small>Origem: ${esc(l.origem || '')} · entrada ${dataBR(l.data_entrada)} ${l.pedidos_erp ? `· ERP: ${esc(l.pedidos_erp)} pedido(s), ${brl(l.total_comprado_erp)} (último ${dataBR(l.ultimo_pedido_erp)})` : ''} ${l.utm ? '· ' + esc(l.utm) : ''}</small></div>
-    ${pode ? '<div class="largo"><button class="primario">Salvar lead</button></div>' : ''}
-  </fieldset></form></div>`;
+var ROT_SEL = '*, visitas(id,ordem,situacao,resultado,valor_pedido,data_visita,hora,conta_id,contas(nome,cidade,uf,endereco,whatsapp,telefone))';
+function loadRoteiros() {
+  sb.from('roteiros').select(ROT_SEL).order('criado_em', { ascending: false }).limit(20).then(function (r) {
+    var rots = q(r), el = document.getElementById('vRots'); if (!el) return;
+    S.vrots = rots;
+    el.innerHTML = rots.length ? '<section class="sec"><h2>Roteiros <span class="n">' + rots.length + '</span></h2>' + rots.map(function (rt) {
+      var vs = (rt.visitas || []).slice().sort(function (a, b) { return (a.ordem || 99) - (b.ordem || 99); });
+      var feitas = vs.filter(function (v) { return v.situacao === 'realizada'; }).length;
+      var ped = vs.reduce(function (s, v) { return s + (Number(v.valor_pedido) || 0); }, 0);
+      return '<div class="rot"><h3>' + esc(rt.nome) + ' ' + pill(rt.status) + '</h3><p class="quando">' + (rt.data_inicio ? dataBR(rt.data_inicio) + ' a ' + dataBR(rt.data_fim) + ' · ' : '') +
+        vs.length + ' paradas · ' + feitas + ' realizadas · pedidos ' + money(ped || 0) + ' · ~' + (rt.km_previsto || '?') + ' km · previsto ' + moneyC(rt.custo_previsto) + (rt.custo_real ? ' · real ' + moneyC(rt.custo_real) : '') + '</p>' +
+        '<div class="links"><button data-prest="' + esc(rt.id) + '">🧾 Prestação de contas</button>' + mapsTrechos(vs.map(function (v) { return v.contas || {}; })).map(function (u, k) { return '<a target="_blank" rel="noopener" href="' + esc(u) + '">🗺️ Trecho ' + (k + 1) + '</a>'; }).join('') + '</div>' +
+        vs.map(function (v) { var c = v.contas || {}; return '<div class="parada clic" data-vconta="' + esc(v.conta_id) + '"><div class="n">' + (v.ordem || '-') + '</div><div><b>' + esc(c.nome) + '</b><small>' + esc(c.cidade || '') + ' · ' + esc(v.situacao) + (v.data_visita ? ' ' + br(v.data_visita) : '') + ' ' + esc(v.hora || '') + (v.resultado ? ' · ' + esc(v.resultado) : '') + '</small></div>' +
+          (waUrl(c.whatsapp || c.telefone, '') ? '<a class="go" target="_blank" rel="noopener" href="' + esc(waUrl(c.whatsapp || c.telefone, '')) + '" aria-label="WhatsApp">' + ICON.chat + '</a>' : '<span></span>') + '</div>'; }).join('') + '</div>';
+    }).join('') + '</section>' : '';
+  }).catch(function (e) { toast(e.message, true); });
 }
-function fichaVisitas(vis) {
-  return `<div class="cartao"><h2>Visitas</h2>
-    ${vis.length ? `<ul class="linha-tempo">${vis.map((v) => `<li><b>${esc(v.situacao)}</b> ${v.data_visita ? '· ' + dataBR(v.data_visita) : ''} ${v.hora ? esc(v.hora) : ''} ${v.resultado ? '· ' + esc(v.resultado) : ''} ${v.valor_pedido ? '· ' + brl(v.valor_pedido) : ''}<small>${esc(v.observacoes || '')} ${v.agendado_por ? '· agendada por ' + esc(v.agendado_por) : ''}</small>
-      <button class="botao pequeno" data-vis="${esc(v.id)}">Atualizar</button></li>`).join('')}</ul>` : '<p class="vazio">Nenhuma visita.</p>'}
-    <form id="f-visita" class="grade"><div><label>Situação</label><select name="situacao">${opts(['a agendar', 'agendada'], 'agendada')}</select></div>
-      <div><label>Data</label><input type="date" name="data_visita"></div><div><label>Hora</label><input name="hora" placeholder="10:30"></div>
-      <div class="largo"><button class="botao verde">+ Agendar visita</button></div></form></div>`;
+function mapsTrechos(contas) {
+  var pts = contas.map(function (c) { return [c.endereco, c.cidade, c.uf].filter(Boolean).join(', ') || c.nome; });
+  var todos = [BASE.nome].concat(pts, [BASE.nome]), out = [];
+  for (var k = 0; k < todos.length - 1; k += 9) out.push('https://www.google.com/maps/dir/' + todos.slice(k, k + 10).map(encodeURIComponent).join('/'));
+  return out;
 }
-function fichaConta(c, p) {
-  const pode = S.papel !== 'sdr' || (p && podeEditarProsp(p));
-  return `<div class="cartao"><h2>Dados da loja</h2>${somenteLeitura(pode, 'Só o SDR da prospecção, o gestor e vendas editam estes dados.')}
-  <form id="f-conta" class="grade"><fieldset ${pode ? '' : 'disabled'} style="border:0;padding:0;margin:0;display:contents">
-    <div class="largo"><label>Nome</label><input name="nome" value="${esc(c.nome)}" required></div>
-    <div><label>Cidade</label><input name="cidade" value="${esc(c.cidade)}"></div><div><label>UF</label><input name="uf" maxlength="2" value="${esc(c.uf)}"></div>
-    <div><label>WhatsApp</label><input name="whatsapp" value="${esc(c.whatsapp)}"></div><div><label>Telefone</label><input name="telefone" value="${esc(c.telefone)}"></div>
-    <div><label>Instagram</label><input name="instagram" value="${esc(c.instagram)}"></div><div><label>E-mail</label><input name="email" value="${esc(c.email)}"></div>
-    <div><label>CNPJ</label><input name="cnpj" value="${esc(c.cnpj)}"></div><div><label>CEP</label><input name="cep" value="${esc(c.cep)}"></div>
-    <div class="largo"><label>Endereço</label><input name="endereco" value="${esc(c.endereco)}"></div>
-    <div><label>Segmento</label><select name="segmento">${opts(['', ...SEGMENTOS], c.segmento || '')}</select></div>
-    <div><label>Tier</label><select name="tier">${opts(['', 'A', 'B', 'C', 'Fora do ICP'], c.tier || '')}</select></div>
-    <div><label>Rota</label><select name="rota">${opts(['', ...Object.keys(ROTAS)], c.rota || '')}</select></div>
-    <div class="largo"><small>Origem: ${esc(c.origem || '')} · criada ${dataBR(c.criado_em)} ${c.criado_por ? 'por ' + esc(c.criado_por) : ''}</small></div>
-    ${pode ? '<div class="largo"><button class="botao">Salvar dados da loja</button></div>' : ''}
-  </fieldset></form></div>`;
-}
-function ligarFicha(c, p, l, vis) {
-  const recarregar = () => abrirConta(c.id);
-  aoEnviar($('#f-toque'), async (e) => {
-    const d = Object.fromEntries(new FormData(e.target));
-    await q(sb.from('interacoes').insert({ conta_id: c.id, lead_id: l?.id || null, prospeccao_id: p?.id || null, tipo: 'toque', canal: d.canal, evento: 'Contato · ' + d.canal, texto: d.texto, por: S.nome }));
-    const avisos = ['Contato registrado.'];
-    // A prospecção só anda enquanto está com o SDR (status 1 a 4); depois de passar ao Pedro, não volta a gerar alerta
-    if (p && ['1. A abordar', '2. Contatado', '3. Respondeu', '4. Sem retorno (pausa 60d)'].includes(p.status)) {
-      if (podeEditarProsp(p)) {
-        const upd = { ultimo_toque: hoje(), proximo_toque: d.proximo || null };
-        if (p.status === '1. A abordar') upd.status = '2. Contatado';
-        if (!p.sdr && S.papel === 'sdr') upd.sdr = S.nome;
-        await atualizar('prospeccoes', upd, p.id);
-      } else avisos.push(`A prospecção é do ${p.sdr}: o próximo toque dela não mudou.`);
-    }
-    // O prazo do lead só muda quando quem registra é o responsável (ou gestor/vendas)
-    if (l && !['Pedido fechado', 'Perdido', 'Descartado'].includes(l.status)) {
-      if (podeEditarLead(l)) {
-        const upd = { ultimo_contato: hoje(), data_proxima_acao: d.proximo || null };
-        if (l.status === 'Novo') upd.status = 'Em contato';
-        await atualizar('leads', upd, l.id);
-      } else avisos.push(`O lead é do ${l.responsavel}: o prazo dele não mudou.`);
-    }
-    aviso(avisos.join(' ')); recarregar();
-  });
-  if (p && podeEditarProsp(p)) aoEnviar($('#f-prosp'), async (e) => {
-    const d = Object.fromEntries(new FormData(e.target));
-    for (const k of ['proximo_toque', 'ultimo_toque', 'sdr', 'respondeu_por']) if (!d[k]) d[k] = null;
-    await atualizar('prospeccoes', d, p.id); aviso('Prospecção salva.'); recarregar();
-  });
-  if (l && podeEditarLead(l)) aoEnviar($('#f-lead'), async (e) => {
-    const d = Object.fromEntries(new FormData(e.target));
-    for (const k of ['data_proxima_acao', 'potencial', 'valor_primeiro_pedido', 'temperatura', 'motivo_perda', 'responsavel']) if (d[k] === '') d[k] = null;
-    if (d.status === 'Perdido' && !d.motivo_perda) { aviso('Informe o motivo de perda.', true); return; }
-    // Passar para o Pedro: o banco troca o responsável e a próxima ação quando o status vira "Qualificado"
-    const passouProPedro = S.papel === 'sdr' && (d.status === 'Qualificado' || d.responsavel === 'Pedro');
-    if (passouProPedro) { d.status = 'Qualificado'; d.responsavel = 'Pedro'; }
-    if (passouProPedro) await q(sb.from('leads').update(d).eq('id', l.id)); else await atualizar('leads', d, l.id);
-    aviso(passouProPedro ? 'Lead passado para o Pedro.' : 'Lead salvo.'); recarregar();
-  });
-  $('#criar-prosp')?.addEventListener('click', async (e) => {
-    e.target.disabled = true;
-    try { await q(sb.from('prospeccoes').insert({ conta_id: c.id, sdr: S.papel === 'sdr' ? S.nome : null, proximo_toque: hoje(), criado_por: S.user.email })); S.sujo = true; recarregar(); } catch { e.target.disabled = false; }
-  });
-  $('#criar-lead')?.addEventListener('click', async (e) => {
-    e.target.disabled = true;
-    try { await q(sb.from('leads').insert({ conta_id: c.id, prospeccao_id: p?.id || null, responsavel: S.nome, origem: c.origem, status: 'Em contato', proxima_acao: 'Retomar conversa', data_proxima_acao: hoje(), criado_por: S.user.email })); S.sujo = true; recarregar(); } catch { e.target.disabled = false; }
-  });
-  aoEnviar($('#f-conta'), async (e) => {
-    const d = Object.fromEntries(new FormData(e.target)); for (const k in d) if (d[k] === '') d[k] = null;
-    if (d.whatsapp) { let wa = digitos(d.whatsapp); if (wa.length <= 11) wa = '55' + wa; d.whatsapp = wa; }
-    if (d.uf) d.uf = d.uf.toUpperCase();
-    if (d.email) d.email = d.email.toLowerCase();
-    if (d.endereco !== c.endereco || d.cidade !== c.cidade) { d.lat = null; d.lng = null; }
-    await atualizar('contas', d, c.id); aviso('Dados salvos.'); recarregar();
-  });
-  aoEnviar($('#f-visita'), async (e) => {
-    const d = Object.fromEntries(new FormData(e.target));
-    await q(sb.from('visitas').insert({ conta_id: c.id, situacao: d.situacao, data_visita: d.data_visita || null, hora: d.hora || null, agendado_por: S.nome, criado_por: S.user.email }));
-    aviso('Visita registrada.'); recarregar();
-  });
-  document.querySelectorAll('[data-vis]').forEach((b) => (b.onclick = () => resultadoVisita(vis.find((v) => v.id === b.dataset.vis), recarregar)));
-}
-
-function resultadoVisita(v, depois) {
-  if (!v) return;
-  $('#f-res')?.closest('.cartao')?.remove();
-  const box = document.createElement('div');
-  box.className = 'cartao';
-  box.innerHTML = `<h2>Atualizar visita</h2><form class="grade" id="f-res">
-    <div><label>Situação</label><select name="situacao">${opts(['agendada', 'realizada', 'reagendar', 'cancelada', 'a agendar'], v.situacao)}</select></div>
-    <div><label>Resultado</label><select name="resultado">${opts(['', 'pedido', 'catálogo / retorno', 'sem interesse', 'reagendar', 'loja fechada'], v.resultado || '')}</select></div>
-    <div><label>Valor do pedido (R$)</label><input type="number" step="0.01" name="valor_pedido" value="${esc(v.valor_pedido ?? '')}"></div>
-    <div><label>Data da visita</label><input type="date" name="data_visita" value="${esc(v.data_visita || '')}"></div>
-    <div><label>Hora</label><input name="hora" value="${esc(v.hora || '')}"></div>
-    <div class="largo"><label>Observações</label><textarea name="observacoes">${esc(v.observacoes)}</textarea></div>
-    <div class="largo"><button class="primario">Salvar</button></div></form>`;
-  $('#modal-corpo').prepend(box); box.scrollIntoView({ behavior: 'smooth' });
-  aoEnviar($('#f-res'), async (e) => {
-    const d = Object.fromEntries(new FormData(e.target));
-    const upd = { situacao: d.situacao, resultado: d.resultado || null, valor_pedido: d.valor_pedido === '' ? null : +d.valor_pedido, observacoes: d.observacoes || null, data_visita: d.data_visita || null, hora: d.hora || null };
-    if (d.situacao === 'realizada' && v.situacao !== 'realizada') upd.checkin_em = new Date().toISOString();
-    // Reagendar com nova data volta a ser uma visita agendada
-    if (d.situacao === 'reagendar' && d.data_visita && d.data_visita !== v.data_visita) upd.situacao = 'agendada';
-    await atualizar('visitas', upd, v.id); aviso('Visita atualizada.'); depois();
-  });
-}
-
-// ---------- Visitas / roteirizador ----------
-const podeMontarRoteiro = () => ['gestor', 'vendas'].includes(S.papel);
-async function telaVisitas() {
-  const app = $('#app');
-  const rotaAtual = S.rota || 'R9';
-  app.innerHTML = `<div class="cartao"><div class="barra">
-      <div><label>Rota</label><select id="v-rota">${Object.keys(ROTAS).map((r) => `<option ${r === rotaAtual ? 'selected' : ''} value="${r}">${r} · ${esc(ROTAS[r])}</option>`).join('')}</select></div>
-      <div><label>Mostrar</label><select id="v-filtro">${opts(['todas', 'agendadas', 'quentes'], S.filtroVis || 'todas').replace('>todas<', '>Todas as lojas da rota<').replace('>agendadas<', '>Só com visita agendada<').replace('>quentes<', '>Clientes, qualificados e leads abertos<')}</select></div>
-      ${podeMontarRoteiro() ? '<div class="acoes"><button class="primario" id="v-montar">Montar roteiro com as marcadas</button></div>' : ''}
-    </div><small>${podeMontarRoteiro()
-      ? 'Marque as lojas e monte o roteiro: a ordem sai de Jaguariúna pela loja mais próxima. Endereços sem coordenada são localizados uma vez (OpenStreetMap, ~1 por segundo) e ficam salvos.'
-      : 'Agende as visitas pela ficha de cada loja; o Pedro monta o roteiro.'}</small></div>
-    <div id="v-lista">Carregando…</div><div id="v-roteiros"></div>`;
-  const carregar = async () => {
-    const rota = $('#v-rota').value; const filtro = $('#v-filtro').value;
-    S.rota = rota; S.filtroVis = filtro;
-    const [contas, pros, leads, vis] = await Promise.all([
-      q(sb.from('contas').select('*').eq('rota', rota).order('cidade')),
-      q(sb.from('v_prospeccoes').select('conta_id,codigo,status,sdr,alerta').eq('rota', rota)),
-      q(sb.from('v_leads').select('conta_id,codigo,status,tipo_status').eq('rota', rota)),
-      q(sb.from('visitas').select('*').in('situacao', ['a agendar', 'agendada', 'reagendar'])),
-    ]);
-    const mp = Object.fromEntries(pros.map((p) => [p.conta_id, p])); const ml = Object.fromEntries(leads.map((l) => [l.conta_id, l])); const mv = {};
-    vis.forEach((v) => { if (!mv[v.conta_id] || !v.roteiro_id) mv[v.conta_id] = v; });
-    let lista = contas.filter((c) => !['6. Fora do ICP', '5. Sem interesse'].includes(mp[c.id]?.status));
-    if (filtro === 'agendadas') lista = lista.filter((c) => mv[c.id]);
-    if (filtro === 'quentes') lista = lista.filter((c) => ml[c.id]?.tipo_status === 'Aberto' || ml[c.id]?.status === 'Pedido fechado' || ['8. Qualificado → Pedro', '0. Já é cliente', '9. Virou cliente'].includes(mp[c.id]?.status));
-    S.cache.vis = { lista };
-    $('#v-lista').innerHTML = lista.length ? `<div class="rolagem"><table class="tabela"><thead><tr>${podeMontarRoteiro() ? '<th></th>' : ''}<th>Loja</th><th>Cidade</th><th>Situação no CRM</th><th class="oculta-cel">Visita</th></tr></thead><tbody>
-      ${lista.map((c) => { const p = mp[c.id]; const l = ml[c.id]; const v = mv[c.id];
-        // marca sozinho só a visita pendente que ainda não está em outro roteiro
-        return `<tr>${podeMontarRoteiro() ? `<td><input type="checkbox" class="v-marca" value="${esc(c.id)}" ${v && !v.roteiro_id ? 'checked' : ''}></td>` : ''}<td class="clicavel" data-conta="${esc(c.id)}"><b>${esc(c.nome)}</b><br><small>${esc(c.endereco || '')}</small></td><td>${esc(c.cidade || '')}</td>
-        <td>${p ? seloStatus(p.status) : ''} ${l ? seloStatus(l.status) : ''}<br><small>${p?.sdr ? 'SDR ' + esc(p.sdr) : ''}</small></td><td class="oculta-cel">${v ? `${esc(v.situacao)} ${dataBR(v.data_visita)} ${esc(v.hora || '')}${v.roteiro_id ? ' · em roteiro' : ''}` : ''}</td></tr>`; }).join('')}
-      </tbody></table></div>` : '<div class="cartao vazio">Nenhuma loja nesta rota com esse filtro.</div>';
-    $('#v-lista').querySelectorAll('[data-conta]').forEach((td) => (td.onclick = () => abrirConta(td.dataset.conta)));
-    listarRoteiros();
-  };
-  $('#v-rota').onchange = carregar; $('#v-filtro').onchange = carregar;
-  if ($('#v-montar')) $('#v-montar').onclick = montarRoteiro;
-  carregar();
-}
-
+function distKm(a, b) { var R = 6371, rad = Math.PI / 180, dLa = (b.lat - a.lat) * rad, dLo = (b.lng - a.lng) * rad; var h = Math.pow(Math.sin(dLa / 2), 2) + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.pow(Math.sin(dLo / 2), 2); return 2 * R * Math.asin(Math.sqrt(h)); }
+function esperar(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 async function geocodificar(c) {
   if (c.lat && c.lng) return c;
-  const consulta = [c.endereco, c.cidade, c.uf, 'Brasil'].filter(Boolean).join(', ');
   try {
-    await new Promise((r) => setTimeout(r, 1100)); // respeita o limite do OpenStreetMap (1 por segundo)
-    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=${encodeURIComponent(consulta)}`);
-    let js = await res.json();
-    let porCidade = false;
-    if (!js.length && c.cidade) {
-      await new Promise((r) => setTimeout(r, 1100));
-      js = await (await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=${encodeURIComponent([c.cidade, c.uf, 'Brasil'].join(', '))}`)).json();
-      porCidade = true;
-    }
+    await esperar(1100); // limite do OpenStreetMap: 1 consulta por segundo
+    var js = await (await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=' + encodeURIComponent([c.endereco, c.cidade, c.uf, 'Brasil'].filter(Boolean).join(', ')))).json();
+    var porCidade = false;
+    if (!js.length && c.cidade) { await esperar(1100); js = await (await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=' + encodeURIComponent([c.cidade, c.uf, 'Brasil'].join(', ')))).json(); porCidade = true; }
     if (js.length) {
       c.lat = +js[0].lat; c.lng = +js[0].lon;
       // só grava a coordenada exata do endereço; a do centro da cidade serve só para ordenar este roteiro
@@ -581,208 +1503,234 @@ async function geocodificar(c) {
   } catch (e) { console.warn('geocodificação falhou', c.nome, e); }
   return c;
 }
-const distKm = (a, b) => { const R = 6371, rad = Math.PI / 180; const dLa = (b.lat - a.lat) * rad, dLo = (b.lng - a.lng) * rad; const h = Math.sin(dLa / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLo / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); };
-
 async function montarRoteiro() {
-  if (!podeMontarRoteiro()) return aviso('Só o gestor e vendas montam roteiros.', true);
-  const bt = $('#v-montar'); if (bt.disabled) return;
-  const ids = [...document.querySelectorAll('.v-marca:checked')].map((i) => i.value);
-  if (!ids.length) return aviso('Marque as lojas do roteiro.', true);
+  if (!podeRoteiro()) { toast('Só o gestor e vendas montam roteiros.', true); return; }
+  var bt = document.getElementById('btnMontar'); if (!bt || bt.disabled) return;
+  var ids = [].map.call(document.querySelectorAll('.v-marca:checked'), function (i) { return i.value; });
+  if (!ids.length) { toast('Marque as lojas do roteiro.', true); return; }
   bt.disabled = true;
   try {
-    const contas = S.cache.vis.lista.filter((c) => ids.includes(c.id)).map((c) => ({ ...c }));
-    const falta = contas.filter((c) => !c.lat);
-    let i = 0;
-    for (const c of contas) { if (!c.lat) aviso(`Localizando endereços: ${++i} de ${falta.length}…`, false, 0); await geocodificar(c); }
-    $('#aviso').hidden = true;
-    const comCoord = contas.filter((c) => c.lat); const semCoord = contas.filter((c) => !c.lat);
-    const ordem = []; let atual = BASE; const resto = [...comCoord]; let km = 0;
-    while (resto.length) { resto.sort((a, b) => distKm(atual, a) - distKm(atual, b)); const prox = resto.shift(); km += distKm(atual, prox); ordem.push(prox); atual = prox; }
+    var contas = S.vcache.lista.filter(function (c) { return ids.indexOf(c.id) >= 0; }).map(function (c) { return Object.assign({}, c); });
+    var falta = contas.filter(function (c) { return !c.lat; }).length, i = 0;
+    for (var c of contas) { if (!c.lat) { bt.textContent = 'Localizando ' + (++i) + ' de ' + falta + '…'; } await geocodificar(c); }
+    var comCoord = contas.filter(function (c) { return c.lat; }), semCoord = contas.filter(function (c) { return !c.lat; });
+    var ordem = [], atual = BASE, resto = comCoord.slice(), km = 0;
+    while (resto.length) { resto.sort(function (a, b) { return distKm(atual, a) - distKm(atual, b); }); var prox = resto.shift(); km += distKm(atual, prox); ordem.push(prox); atual = prox; }
     km += ordem.length ? distKm(atual, BASE) : 0;
-    const final = [...ordem, ...semCoord];
-    const pontos = final.map((c) => [c.endereco, c.cidade, c.uf].filter(Boolean).join(', ') || c.nome);
-    const trechos = []; const todos = [BASE.nome, ...pontos, BASE.nome];
-    for (let k = 0; k < todos.length - 1; k += 9) trechos.push(todos.slice(k, k + 10));
-    const rota = $('#v-rota').value;
-    abrirModal(`<h2>Roteiro · ${esc(ROTAS[rota])}</h2>
-      <p>${final.length} paradas · ~${Math.round(km * 1.25)} km rodoviários estimados (linha reta × 1,25) ${semCoord.length ? `· ${semCoord.length} sem localização (no fim da lista)` : ''}</p>
-      <div class="links">${trechos.map((t, k) => `<a target="_blank" rel="noopener" href="${esc('https://www.google.com/maps/dir/' + t.map(encodeURIComponent).join('/'))}">🗺️ Trecho ${k + 1} no Google Maps</a>`).join('')}</div>
-      <div>${final.map((c, k) => `<div class="parada"><div class="n">${k + 1}</div><div><b>${esc(c.nome)}</b><small>${esc(c.endereco || '')} · ${esc(c.cidade || '')}</small></div><div>${waLink(c) ? `<a class="botao pequeno" target="_blank" rel="noopener" href="${esc(waLink(c))}">💬</a>` : ''}</div></div>`).join('')}</div>
-      <form id="f-rot" class="grade" style="margin-top:12px"><div class="largo"><label>Nome do roteiro</label><input name="nome" value="${esc(rota)} · ${dataBR(hoje())}"></div>
-        <div><label>Início</label><input type="date" name="data_inicio"></div><div><label>Fim</label><input type="date" name="data_fim"></div>
-        <div><label>Custo previsto (R$)</label><input type="number" name="custo" value="${Math.round(km * 1.25 * 1.12 + 270)}"></div>
-        <div class="largo"><button class="primario">Salvar roteiro e marcar visitas</button></div></form>`);
-    aoEnviar($('#f-rot'), async (e) => {
-      const d = Object.fromEntries(new FormData(e.target));
-      // visitas pendentes lidas agora (não do cache), para não duplicar nem tirar paradas de outro roteiro
-      const pend = await q(sb.from('visitas').select('id,conta_id,roteiro_id').in('conta_id', final.map((c) => c.id)).in('situacao', ['a agendar', 'agendada', 'reagendar']));
-      const livres = Object.fromEntries(pend.filter((v) => !v.roteiro_id).map((v) => [v.conta_id, v]));
-      const r = await q(sb.from('roteiros').insert({ nome: d.nome, rota, data_inicio: d.data_inicio || null, data_fim: d.data_fim || null, km_previsto: Math.round(km * 1.25), custo_previsto: d.custo || null, criado_por: S.user.email }).select('id').single());
-      for (const [k, c] of final.entries()) {
-        const v = livres[c.id];
-        if (v) await atualizar('visitas', { roteiro_id: r.id, ordem: k + 1 }, v.id);
-        else await q(sb.from('visitas').insert({ conta_id: c.id, roteiro_id: r.id, ordem: k + 1, situacao: 'a agendar', agendado_por: S.nome, criado_por: S.user.email }));
-      }
-      aviso('Roteiro salvo.'); S.sujo = true; fecharModal();
-    });
-  } finally { bt.disabled = false; }
+    var fin = ordem.concat(semCoord), rota = S.rota || 'R9', kmR = Math.round(km * 1.25);
+    S.rotDraft = { fin: fin, rota: rota, km: kmR };
+    S.sheet = { type: 'rot' };
+    openWide(head('Roteiro · ' + rota, ROTAS[rota]) + '<div class="pb">' +
+      '<p class="note" style="margin-top:0">' + fin.length + ' paradas · ~' + kmR + ' km rodoviários estimados (linha reta × 1,25)' + (semCoord.length ? ' · ' + semCoord.length + ' sem localização (no fim da lista)' : '') + '</p>' +
+      '<div class="links">' + mapsTrechos(fin).map(function (u, k) { return '<a target="_blank" rel="noopener" href="' + esc(u) + '">🗺️ Trecho ' + (k + 1) + ' no Google Maps</a>'; }).join('') + '</div>' +
+      '<div class="pc">' + fin.map(function (c, k) { return '<div class="parada"><div class="n">' + (k + 1) + '</div><div><b>' + esc(c.nome) + '</b><small>' + esc(c.endereco || '') + ' · ' + esc(c.cidade || '') + '</small></div>' +
+        (waUrl(c.whatsapp || c.telefone, '') ? '<a class="go" target="_blank" rel="noopener" href="' + esc(waUrl(c.whatsapp || c.telefone, '')) + '">' + ICON.chat + '</a>' : '<span></span>') + '</div>'; }).join('') + '</div>' +
+      '<div class="lbl">Dados do roteiro</div><div class="fgrid"><div class="full"><label>Nome</label><input class="fld" id="rt-nome" value="' + esc(rota + ' · ' + br(D.today)) + '"></div>' +
+      '<div><label>Saída</label><input class="fld" type="date" id="rt-ini"></div><div><label>Volta</label><input class="fld" type="date" id="rt-fim"></div>' +
+      '<div class="full"><label>Custo previsto (R$)</label><input class="fld" id="rt-custo" inputmode="decimal" value="' + Math.round(kmR * 1.12 + 270) + '"></div></div>' +
+      '<div class="note">Custo previsto = km × R$ 1,12 + hotel e diária (R$ 270). Teto por 1º pedido: ' + moneyC(PRIMEIRO_PEDIDO_BASE / MER_MIN_B2B) + ' (1º pedido ÷ ' + String(MER_MIN_B2B).replace('.', ',') + ').</div>' +
+      '</div><div class="pf"><button class="btn" data-act="close">Cancelar</button><button class="btn primary" data-act="rotSave" id="btnSave">Salvar roteiro e marcar visitas</button></div>');
+  } finally { bt.disabled = false; bt.textContent = 'Montar roteiro com as marcadas'; }
 }
-
-async function listarRoteiros() {
-  const rots = await q(sb.from('roteiros').select('*, visitas(id,ordem,situacao,resultado,valor_pedido,data_visita,hora,conta_id,contas(nome,cidade,endereco,whatsapp,telefone))').order('criado_em', { ascending: false }).limit(20));
-  $('#v-roteiros').innerHTML = rots.length ? `<h2 style="margin-top:16px">Roteiros</h2>${rots.map((r) => {
-    const vs = (r.visitas || []).sort((a, b) => (a.ordem || 99) - (b.ordem || 99));
-    const feitas = vs.filter((v) => v.situacao === 'realizada').length; const pedidos = vs.reduce((s, v) => s + (+v.valor_pedido || 0), 0);
-    return `<div class="cartao"><h3>${esc(r.nome)} · ${esc(r.status)}</h3><small>${dataBR(r.data_inicio)} a ${dataBR(r.data_fim)} · ${vs.length} paradas · ${feitas} realizadas · pedidos ${brl(pedidos)} · ~${r.km_previsto || '?'} km · custo previsto ${brl(r.custo_previsto)}${r.custo_real ? ' · custo real ' + brl(r.custo_real) : ''}</small>
-      <div class="links"><button class="botao pequeno" data-prestacao="${esc(r.id)}">🧾 Prestação de contas</button></div>
-      <div>${vs.map((v) => `<div class="parada"><div class="n">${v.ordem || '-'}</div><div class="clicavel" data-conta="${v.conta_id}"><b>${esc(v.contas?.nome)}</b><small>${esc(v.contas?.cidade || '')} · ${esc(v.situacao)} ${v.data_visita ? dataBR(v.data_visita) : ''} ${esc(v.hora || '')} ${v.resultado ? '· ' + esc(v.resultado) : ''}</small></div>
-        <div>${waLink(v.contas || {}) ? `<a class="botao pequeno" target="_blank" href="${waLink(v.contas)}">💬</a>` : ''}</div></div>`).join('')}</div></div>`; }).join('')}` : '';
-  $('#v-roteiros').querySelectorAll('[data-conta]').forEach((el) => (el.onclick = () => abrirConta(el.dataset.conta)));
-  $('#v-roteiros').querySelectorAll('[data-prestacao]').forEach((b) => (b.onclick = () => prestacaoContas(rots.find((r) => r.id === b.dataset.prestacao))));
-}
-
-// ---------- Prestação de contas da viagem (formato do Financeiro, 16/11/2026) ----------
-const CATEGORIAS_DESP = ['Combustível', 'Hotel, pedágio e estacionamento', 'Alimentação', 'Manutenção do veículo'];
-const FORMAS_PAG = ['Cartão da empresa', 'Pix da empresa', 'Pago pelo Pedro (reembolso)'];
-const PRIMEIRO_PEDIDO_BASE = 3000; // Financeiro, 16/11: base R$ 3,0 mil (R$ 3,9 mil = cenário otimista)
-const MER_MIN_B2B = 6.5; // custo de visita por 1º pedido ≤ 1º pedido ÷ 6,5
-const marcadorViagem = (r) => `VIAGEM-${(r.data_inicio || hoje()).replaceAll('-', '')}-${r.rota || 'SEM-ROTA'}`;
-
-async function prestacaoContas(r) {
-  if (!r) return;
-  const podeEditar = ['gestor', 'vendas'].includes(S.papel);
-  const desp = await q(sb.from('despesas_viagem').select('*').eq('roteiro_id', r.id).order('data'));
-  const vs = (r.visitas || []).sort((a, b) => (a.ordem || 99) - (b.ordem || 99));
-  const total = desp.reduce((s, d) => s + +d.valor, 0);
-  const porCat = CATEGORIAS_DESP.map((c) => [c, desp.filter((d) => d.categoria === c).reduce((s, d) => s + +d.valor, 0)]);
-  const reembolso = desp.filter((d) => d.forma_pagamento === 'Pago pelo Pedro (reembolso)').reduce((s, d) => s + +d.valor, 0);
-  const pedidos = vs.filter((v) => v.resultado === 'pedido');
-  const km = r.km_saida != null && r.km_volta != null ? r.km_volta - r.km_saida : null;
-  const teto = PRIMEIRO_PEDIDO_BASE / MER_MIN_B2B;
-  const custoPorPedido = pedidos.length ? total / pedidos.length : null;
-  const marcador = r.marcador_tiny || marcadorViagem(r);
-  abrirModal(`<h2>Prestação de contas · ${esc(r.nome)}</h2>
-    <p>Marcador no Tiny: <b>${esc(marcador)}</b> · ${vs.length} paradas · ${vs.filter((v) => v.situacao === 'realizada').length} visitas realizadas · ${pedidos.length} pedido(s) ${brl(pedidos.reduce((s, v) => s + (+v.valor_pedido || 0), 0))}</p>
-    <div class="kpis">
-      <div class="kpi"><b>${brl(total)}</b><span>Total de despesas</span></div>
-      <div class="kpi"><b>${km != null ? km.toLocaleString('pt-BR') + ' km' : '—'}</b><span>Km rodados (odômetro)</span></div>
-      <div class="kpi"><b>${brl(reembolso)}</b><span>A reembolsar ao Pedro</span></div>
-      <div class="kpi"><b>${custoPorPedido != null ? brl(custoPorPedido) : '—'}</b><span>Custo por pedido · teto ${brl(teto)} (1º pedido ÷ ${String(MER_MIN_B2B).replace('.', ',')})</span></div>
-    </div>
-    <div class="cartao"><h3>Viagem</h3><form id="f-viagem" class="grade">
-      <div><label>Saída</label><input type="date" name="data_inicio" value="${r.data_inicio || ''}" ${podeEditar ? '' : 'disabled'}></div>
-      <div><label>Volta</label><input type="date" name="data_fim" value="${r.data_fim || ''}" ${podeEditar ? '' : 'disabled'}></div>
-      <div><label>Odômetro na saída (km)</label><input type="number" name="km_saida" value="${r.km_saida ?? ''}" ${podeEditar ? '' : 'disabled'}></div>
-      <div><label>Odômetro na volta (km)</label><input type="number" name="km_volta" value="${r.km_volta ?? ''}" ${podeEditar ? '' : 'disabled'}></div>
-      <div><label>Situação</label><select name="status" ${podeEditar ? '' : 'disabled'}>${opts(['planejado', 'em andamento', 'concluído', 'cancelado'], r.status)}</select></div>
-      ${podeEditar ? '<div class="largo"><button class="botao">Salvar dados da viagem</button></div>' : ''}</form></div>
-    <div class="cartao"><h3>Despesas</h3>
-      ${desp.length ? `<table class="tabela"><thead><tr><th>Data</th><th>Categoria</th><th>Valor</th><th class="oculta-cel">Fornecedor</th><th class="oculta-cel">Pagamento</th><th>Comprovante</th>${podeEditar ? '<th></th>' : ''}</tr></thead><tbody>
-        ${desp.map((d) => `<tr><td>${dataBR(d.data)}</td><td>${esc(d.categoria)}<br><small>${esc(d.conta_tiny)}</small></td><td>${brl(d.valor)}</td><td class="oculta-cel">${esc(d.fornecedor || '')}<br><small>${esc(d.cnpj_fornecedor || '')}${d.nota_cnpj_indiao ? ' · nota no CNPJ da Indião' : ''}</small></td><td class="oculta-cel">${esc(d.forma_pagamento)}</td>
-          <td>${d.comprovante_path ? `<a href="#" data-comp="${esc(d.comprovante_path)}">ver</a>` : '<span class="selo alerta">falta</span>'}</td>${podeEditar ? `<td><button class="botao pequeno" data-apaga-desp="${esc(d.id)}">apagar</button></td>` : ''}</tr>`).join('')}
-      </tbody></table>` : '<p class="vazio">Nenhuma despesa lançada.</p>'}
-      <p><small>${porCat.filter(([, v]) => v).map(([c, v]) => `${esc(c)}: ${brl(v)}`).join(' · ')}</small></p>
-      ${podeEditar ? `<h3>+ Lançar despesa</h3><form id="f-desp" class="grade">
-        <div><label>Data</label><input type="date" name="data" value="${hoje()}" required></div>
-        <div><label>Categoria</label><select name="categoria">${opts(CATEGORIAS_DESP, 'Combustível')}</select></div>
-        <div><label>Valor (R$)</label><input type="number" step="0.01" min="0.01" name="valor" required></div>
-        <div><label>Forma de pagamento</label><select name="forma_pagamento">${opts(FORMAS_PAG, 'Cartão da empresa')}</select></div>
-        <div><label>Fornecedor</label><input name="fornecedor"></div>
-        <div><label>CNPJ do fornecedor</label><input name="cnpj_fornecedor"></div>
-        <div class="largo"><label><input type="checkbox" name="nota_cnpj_indiao" style="width:auto"> Nota/cupom emitido no CNPJ da Indião (61.168.071/0001-92)</label></div>
-        <div class="largo"><label>Foto do comprovante</label><input type="file" name="foto" accept="image/*,application/pdf" capture="environment"></div>
-        <div class="largo"><label>Observações</label><input name="observacoes"></div>
-        <div class="largo"><button class="primario">Lançar despesa</button></div></form>` : ''}
-    </div>
-    <div class="links"><button class="botao" id="exp-prest">⬇️ Exportar prestação de contas (CSV)</button></div>`);
-
-  const recarregar = async () => { const nr = await q(sb.from('roteiros').select('*, visitas(id,ordem,situacao,resultado,valor_pedido,data_visita,hora,conta_id,contas(nome,cidade,endereco,whatsapp,telefone))').eq('id', r.id).single()); prestacaoContas(nr); };
-  aoEnviar($('#f-viagem'), async (e) => {
-    const d = Object.fromEntries(new FormData(e.target));
-    const upd = { data_inicio: d.data_inicio || null, data_fim: d.data_fim || null, km_saida: d.km_saida === '' ? null : +d.km_saida, km_volta: d.km_volta === '' ? null : +d.km_volta, status: d.status };
-    if (upd.km_saida != null && upd.km_volta != null && upd.km_volta < upd.km_saida) { aviso('O odômetro da volta está menor que o da saída.', true); return; }
-    upd.marcador_tiny = marcadorViagem({ ...r, ...upd });
-    await atualizar('roteiros', upd, r.id); aviso('Viagem salva.'); recarregar();
-  });
-  aoEnviar($('#f-desp'), async (e) => {
-    const f = e.target; const d = Object.fromEntries(new FormData(f));
-    let caminho = null; const arq = f.foto.files[0];
-    if (arq) {
-      const ext = (arq.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '');
-      caminho = `${r.id}/${Date.now()}-${d.categoria.slice(0, 4).toLowerCase()}.${ext}`;
-      const { error } = await sb.storage.from('comprovantes').upload(caminho, arq, { contentType: arq.type || undefined });
-      if (error) { aviso('Falha ao enviar a foto: ' + error.message, true); return; }
+async function salvarRoteiro() {
+  var dr = S.rotDraft; if (!dr) return;
+  var btn = document.getElementById('btnSave'); if (btn.disabled) return; busy(btn, true);
+  try {
+    var ids = dr.fin.map(function (c) { return c.id; });
+    // visitas pendentes lidas agora, para não duplicar nem tirar paradas de outro roteiro
+    var pend = q(await sb.from('visitas').select('id,conta_id,roteiro_id').in('conta_id', ids).in('situacao', ['a agendar', 'agendada', 'reagendar']));
+    var livres = {}; pend.filter(function (v) { return !v.roteiro_id; }).forEach(function (v) { livres[v.conta_id] = v; });
+    var user = (await sb.auth.getUser()).data.user;
+    var r = q(await sb.from('roteiros').insert({ nome: document.getElementById('rt-nome').value || dr.rota, rota: dr.rota, data_inicio: document.getElementById('rt-ini').value || null,
+      data_fim: document.getElementById('rt-fim').value || null, km_previsto: dr.km, custo_previsto: Number(String(document.getElementById('rt-custo').value).replace(/\./g, '').replace(',', '.')) || null,
+      criado_por: user.email }).select('id').single());
+    for (var k = 0; k < dr.fin.length; k++) {
+      var c = dr.fin[k], v = livres[c.id];
+      if (v) q(await sb.from('visitas').update({ roteiro_id: r.id, ordem: k + 1 }).eq('id', v.id).select('id'));
+      else q(await sb.from('visitas').insert({ conta_id: c.id, roteiro_id: r.id, ordem: k + 1, situacao: 'a agendar', agendado_por: D.me, criado_por: user.email }));
     }
-    await q(sb.from('despesas_viagem').insert({ roteiro_id: r.id, data: d.data, categoria: d.categoria, valor: +d.valor, forma_pagamento: d.forma_pagamento, fornecedor: d.fornecedor || null, cnpj_fornecedor: d.cnpj_fornecedor || null, nota_cnpj_indiao: !!d.nota_cnpj_indiao, comprovante_path: caminho, observacoes: d.observacoes || null, criado_por: S.user.email }));
-    aviso('Despesa lançada.'); recarregar(); // o total da viagem (custo_real) é recalculado pelo banco
-  });
-  document.querySelectorAll('[data-apaga-desp]').forEach((b) => (b.onclick = async () => {
-    const d = desp.find((x) => x.id === b.dataset.apagaDesp); if (!d) return;
-    if (!confirm(`Apagar ${d.categoria} de ${dataBR(d.data)} (${brl(d.valor)})? A foto do comprovante também será apagada.`)) return;
-    b.disabled = true;
-    await q(sb.from('despesas_viagem').delete().eq('id', d.id));
-    if (d.comprovante_path) await sb.storage.from('comprovantes').remove([d.comprovante_path]);
-    aviso('Despesa apagada.'); recarregar();
-  }));
-  document.querySelectorAll('[data-comp]').forEach((a) => (a.onclick = async (e) => {
-    e.preventDefault();
-    const { data, error } = await sb.storage.from('comprovantes').createSignedUrl(a.dataset.comp, 600);
-    if (error) return aviso(error.message, true);
-    window.open(data.signedUrl, '_blank');
-  }));
-  $('#exp-prest').onclick = () => {
-    const cab = [
-      ['Marcador Tiny', marcador], ['Roteiro', r.nome], ['Rota', r.rota || ''], ['Saída', dataBR(r.data_inicio)], ['Volta', dataBR(r.data_fim)],
-      ['Odômetro saída', r.km_saida ?? ''], ['Odômetro volta', r.km_volta ?? ''], ['Km rodados', km ?? ''],
-      ['Lojistas visitados (ID CRM)', vs.filter((v) => v.situacao === 'realizada').map((v) => v.contas?.nome).join(' | ')],
-      ['Total de despesas', total.toFixed(2).replace('.', ',')], ['A reembolsar ao Pedro', reembolso.toFixed(2).replace('.', ',')],
-    ];
-    const linhas = desp.map((d) => ({ data: dataBR(d.data), categoria: d.categoria, conta_tiny: d.conta_tiny, valor: String(d.valor).replace('.', ','), fornecedor: d.fornecedor || '', cnpj_fornecedor: d.cnpj_fornecedor || '', forma_pagamento: d.forma_pagamento, nota_cnpj_indiao: d.nota_cnpj_indiao ? 'sim' : 'não', comprovante: d.comprovante_path ? 'sim' : 'FALTA', observacoes: d.observacoes || '' }));
-    const csvCab = cab.map(([k, v]) => `${celulaCSV(k)};${celulaCSV(v)}`).join('\n');
-    const cols = ['data', 'categoria', 'conta_tiny', 'valor', 'fornecedor', 'cnpj_fornecedor', 'forma_pagamento', 'nota_cnpj_indiao', 'comprovante', 'observacoes'];
-    const csvDesp = [cols.join(';'), ...linhas.map((l) => cols.map((c) => celulaCSV(l[c])).join(';'))].join('\n');
-    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csvCab + '\n\n' + csvDesp], { type: 'text/csv;charset=utf-8' })); a.download = `${marcador}.csv`; a.click();
-  };
+    closeSheet(); toast('Roteiro salvo ✓'); if (S.tab === 'visitas') loadVisitas();
+  } catch (e) { busy(btn, false, 'Salvar roteiro e marcar visitas'); toast(e.message, true); }
+}
+function marcadorViagem(r) { return 'VIAGEM-' + String(r.data_inicio || D.today).replace(/-/g, '') + '-' + (r.rota || 'SEM-ROTA'); }
+async function prestacaoContas(id) {
+  var r = q(await sb.from('roteiros').select(ROT_SEL).eq('id', id).single());
+  var desp = q(await sb.from('despesas_viagem').select('*').eq('roteiro_id', id).order('data'));
+  var pode = podeRoteiro();
+  var vs = (r.visitas || []).slice().sort(function (a, b) { return (a.ordem || 99) - (b.ordem || 99); });
+  var total = desp.reduce(function (s, d) { return s + Number(d.valor); }, 0);
+  var reemb = desp.filter(function (d) { return d.forma_pagamento === 'Pago pelo Pedro (reembolso)'; }).reduce(function (s, d) { return s + Number(d.valor); }, 0);
+  var pedidos = vs.filter(function (v) { return v.resultado === 'pedido'; });
+  var km = r.km_saida != null && r.km_volta != null ? r.km_volta - r.km_saida : null;
+  var teto = PRIMEIRO_PEDIDO_BASE / MER_MIN_B2B, cpp = pedidos.length ? total / pedidos.length : null;
+  var marcador = r.marcador_tiny || marcadorViagem(r), dis = pode ? '' : ' disabled';
+  S.sheet = { type: 'prest', id: id }; S.prest = { r: r, desp: desp, vs: vs, total: total, reemb: reemb, km: km, marcador: marcador };
+  var kpi = function (v, t, i) { return '<div class="kpi"><b>' + v + '</b><span>' + t + '</span>' + (i ? '<i>' + i + '</i>' : '') + '</div>'; };
+  openWide(head('Prestação de contas', r.nome) + '<div class="pb">' +
+    '<p class="note" style="margin-top:0">Marcador no Tiny: <b>' + esc(marcador) + '</b> · ' + vs.length + ' paradas · ' + vs.filter(function (v) { return v.situacao === 'realizada'; }).length + ' visitas realizadas · ' + pedidos.length + ' pedido(s) ' + moneyC(pedidos.reduce(function (s, v) { return s + (Number(v.valor_pedido) || 0); }, 0)) + '</p>' +
+    '<div class="kpis">' + kpi(moneyC(total), 'Total de despesas') + kpi(km != null ? km.toLocaleString('pt-BR') + ' km' : '—', 'Km rodados') + kpi(moneyC(reemb), 'A reembolsar ao Pedro') +
+    kpi(cpp != null ? moneyC(cpp) : '—', 'Custo por pedido', 'teto ' + moneyC(teto)) + '</div>' +
+    '<div class="lbl">Viagem</div><div class="fgrid">' +
+    '<div><label>Saída</label><input class="fld" type="date" id="pv-ini" value="' + esc(r.data_inicio || '') + '"' + dis + '></div>' +
+    '<div><label>Volta</label><input class="fld" type="date" id="pv-fim" value="' + esc(r.data_fim || '') + '"' + dis + '></div>' +
+    '<div><label>Odômetro na saída (km)</label><input class="fld" id="pv-kms" inputmode="numeric" value="' + esc(r.km_saida == null ? '' : r.km_saida) + '"' + dis + '></div>' +
+    '<div><label>Odômetro na volta (km)</label><input class="fld" id="pv-kmv" inputmode="numeric" value="' + esc(r.km_volta == null ? '' : r.km_volta) + '"' + dis + '></div>' +
+    '<div class="full"><label>Situação</label><select class="fld" id="pv-st"' + dis + '>' + optList(['planejado', 'em andamento', 'concluído', 'cancelado'], r.status) + '</select></div></div>' +
+    (pode ? '<button class="btn dark" style="width:100%;margin-top:8px" data-act="viagemSave">Salvar dados da viagem</button>' : '') +
+    '<div class="lbl">Despesas</div>' + (desp.length ? '<div class="tw"><table class="pt left"><thead><tr><th>Data</th><th>Categoria</th><th>Valor</th><th>Pagamento</th><th>Comprovante</th>' + (pode ? '<th></th>' : '') + '</tr></thead><tbody>' +
+      desp.map(function (d) { return '<tr><td>' + dataBR(d.data) + '</td><td>' + esc(d.categoria) + '<br><small class="t-muted">' + esc(d.conta_tiny || '') + (d.fornecedor ? ' · ' + esc(d.fornecedor) : '') + (d.nota_cnpj_indiao ? ' · nota no CNPJ da Indião' : '') + '</small></td><td>' + moneyC(d.valor) + '</td><td>' + esc(d.forma_pagamento) + '</td>' +
+        '<td>' + (d.comprovante_path ? '<a href="#" data-comp="' + esc(d.comprovante_path) + '">ver</a>' : '<span class="tag red">falta</span>') + '</td>' + (pode ? '<td><button class="chip" data-apagadesp="' + esc(d.id) + '">apagar</button></td>' : '') + '</tr>'; }).join('') +
+      '</tbody></table></div>' : '<p class="note">Nenhuma despesa lançada.</p>') +
+    (pode ? '<div class="lbl">+ Lançar despesa</div><div class="qbox"><div class="fgrid">' +
+      '<div><label>Data</label><input class="fld" type="date" id="dp-data" value="' + D.today + '"></div>' +
+      '<div><label>Categoria</label><select class="fld" id="dp-cat">' + optList(CATEGORIAS_DESP, 'Combustível') + '</select></div>' +
+      '<div><label>Valor (R$)</label><input class="fld" id="dp-valor" inputmode="decimal" placeholder="0,00"></div>' +
+      '<div><label>Pagamento</label><select class="fld" id="dp-forma">' + optList(FORMAS_PAG, 'Cartão da empresa') + '</select></div>' +
+      '<div><label>Fornecedor</label><input class="fld" id="dp-forn"></div><div><label>CNPJ do fornecedor</label><input class="fld" id="dp-cnpj" inputmode="numeric"></div>' +
+      '<div class="full"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="dp-nota" style="width:20px;height:20px"> Nota/cupom no CNPJ da Indião (61.168.071/0001-92)</label></div>' +
+      '<div class="full"><label>Foto do comprovante</label><input class="fld" type="file" id="dp-foto" accept="image/*,application/pdf" capture="environment"></div>' +
+      '<div class="full"><label>Observações</label><input class="fld" id="dp-obs"></div></div>' +
+      '<button class="btn primary" style="width:100%;margin-top:8px" data-act="despSave" id="btnDesp">Lançar despesa</button></div>' : '') +
+    '<div class="links" style="margin-top:14px"><button data-act="prestCSV">⬇️ Exportar prestação de contas (CSV)</button></div></div>');
+}
+function numBR(v) { var t = String(v || '').trim(); if (!t) return null; if (/,/.test(t)) t = t.replace(/\./g, '').replace(',', '.'); var n = Number(t); return isNaN(n) ? null : n; }
+async function salvarViagem() {
+  var p = S.prest, g = function (id) { return document.getElementById(id).value; };
+  var upd = { data_inicio: g('pv-ini') || null, data_fim: g('pv-fim') || null, km_saida: numBR(g('pv-kms')), km_volta: numBR(g('pv-kmv')), status: g('pv-st') };
+  if (upd.km_saida != null && upd.km_volta != null && upd.km_volta < upd.km_saida) { toast('O odômetro da volta está menor que o da saída.', true); return; }
+  upd.marcador_tiny = marcadorViagem(Object.assign({}, p.r, upd));
+  try { var r = q(await sb.from('roteiros').update(upd).eq('id', p.r.id).select('id')); if (!r.length) throw new Error('Sem permissão para alterar este roteiro.'); toast('Viagem salva ✓'); prestacaoContas(p.r.id); }
+  catch (e) { toast(e.message, true); }
+}
+async function salvarDespesa() {
+  var p = S.prest, g = function (id) { return document.getElementById(id); }, btn = g('btnDesp');
+  var valor = numBR(g('dp-valor').value);
+  if (!valor || valor <= 0) { toast('Informe o valor da despesa.', true); return; }
+  if (btn.disabled) return; busy(btn, true);
+  try {
+    var caminho = null, arq = g('dp-foto').files[0];
+    if (arq) {
+      var ext = (arq.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '');
+      caminho = p.r.id + '/' + Date.now() + '-' + g('dp-cat').value.slice(0, 4).toLowerCase() + '.' + ext;
+      var up = await sb.storage.from('comprovantes').upload(caminho, arq, { contentType: arq.type || undefined });
+      if (up.error) throw new Error('Falha ao enviar a foto: ' + up.error.message);
+    }
+    var user = (await sb.auth.getUser()).data.user;
+    q(await sb.from('despesas_viagem').insert({ roteiro_id: p.r.id, data: g('dp-data').value, categoria: g('dp-cat').value, valor: valor, forma_pagamento: g('dp-forma').value,
+      fornecedor: g('dp-forn').value || null, cnpj_fornecedor: g('dp-cnpj').value || null, nota_cnpj_indiao: g('dp-nota').checked, comprovante_path: caminho, observacoes: g('dp-obs').value || null, criado_por: user.email }));
+    toast('Despesa lançada ✓'); prestacaoContas(p.r.id); // o total da viagem (custo_real) é recalculado pelo banco
+  } catch (e) { busy(btn, false, 'Lançar despesa'); toast(e.message, true); }
+}
+function prestCSV() {
+  var p = S.prest, r = p.r;
+  var cab = [['Marcador Tiny', p.marcador], ['Roteiro', r.nome], ['Rota', r.rota || ''], ['Saída', dataBR(r.data_inicio)], ['Volta', dataBR(r.data_fim)],
+    ['Odômetro saída', r.km_saida == null ? '' : r.km_saida], ['Odômetro volta', r.km_volta == null ? '' : r.km_volta], ['Km rodados', p.km == null ? '' : p.km],
+    ['Lojistas visitados', p.vs.filter(function (v) { return v.situacao === 'realizada'; }).map(function (v) { return (v.contas || {}).nome; }).join(' | ')],
+    ['Total de despesas', p.total.toFixed(2).replace('.', ',')], ['A reembolsar ao Pedro', p.reemb.toFixed(2).replace('.', ',')]]
+    .map(function (x) { return celulaCSV(x[0]) + ';' + celulaCSV(x[1]); }).join('\n');
+  baixarCSV(p.marcador + '.csv', p.desp.map(function (d) {
+    return { data: dataBR(d.data), categoria: d.categoria, conta_tiny: d.conta_tiny, valor: String(d.valor).replace('.', ','), fornecedor: d.fornecedor || '', cnpj_fornecedor: d.cnpj_fornecedor || '',
+      forma_pagamento: d.forma_pagamento, nota_cnpj_indiao: d.nota_cnpj_indiao ? 'sim' : 'não', comprovante: d.comprovante_path ? 'sim' : 'FALTA', observacoes: d.observacoes || '' };
+  }), cab);
 }
 
-// ---------- Usuários (gestor) ----------
-async function telaUsuarios() {
-  const app = $('#app');
-  const perfis = await q(sb.from('perfis').select('*').order('nome'));
-  app.innerHTML = `<div class="cartao"><h2>Usuários do CRM</h2>
-    <table class="tabela"><thead><tr><th>Nome</th><th>E-mail</th><th>Papel</th><th>Ativo</th></tr></thead><tbody>
-    ${perfis.map((p) => `<tr><td>${esc(p.nome)}</td><td>${esc(p.email)}</td><td><select data-papel="${esc(p.email)}">${opts(['gestor', 'vendas', 'sdr'], p.papel)}</select></td><td><input type="checkbox" data-ativo="${esc(p.email)}" ${p.ativo ? 'checked' : ''}></td></tr>`).join('')}
-    </tbody></table>
-    <h3>Adicionar usuário</h3>
-    <form id="f-user" class="grade"><div><label>Nome (como aparece no CRM: Pedro, Lucas, Ian…)</label><input name="nome" required></div>
-      <div><label>E-mail</label><input name="email" type="email" required></div>
-      <div><label>Papel</label><select name="papel">${opts(['sdr', 'vendas', 'gestor'], 'sdr')}</select></div>
-      <div><label>Nome no Olist Tiny</label><input name="nome_tiny"></div>
-      <div class="largo"><button class="primario">Liberar acesso</button> <small>A pessoa entra em crm.indiaostore.com.br com esse e-mail.</small></div></form>
-    <h3>Exportar</h3><div class="links"><a href="#" id="exp-p">⬇️ Prospecção (CSV)</a><a href="#" id="exp-l">⬇️ Leads (CSV)</a></div></div>`;
-  app.querySelectorAll('[data-papel]').forEach((s) => (s.onchange = async () => { await q(sb.from('perfis').update({ papel: s.value }).eq('email', s.dataset.papel)); aviso('Papel atualizado.'); }));
-  app.querySelectorAll('[data-ativo]').forEach((c) => (c.onchange = async () => { await q(sb.from('perfis').update({ ativo: c.checked }).eq('email', c.dataset.ativo)); aviso('Atualizado.'); }));
-  aoEnviar($('#f-user'), async (e) => {
-    const d = Object.fromEntries(new FormData(e.target)); d.email = d.email.toLowerCase().trim(); d.nome = d.nome.trim(); if (!d.nome_tiny) d.nome_tiny = null;
-    await q(sb.from('perfis').insert(d)); aviso(`Acesso liberado para ${d.nome}. O nome precisa ser igual ao usado no CRM (ex.: Lucas, Ian).`); telaUsuarios();
-  });
-  $('#exp-p').onclick = async (e) => { e.preventDefault(); baixarCSV('prospeccao.csv', await q(sb.from('v_prospeccoes').select('*'))); };
-  $('#exp-l').onclick = async (e) => { e.preventDefault(); baixarCSV('leads.csv', await q(sb.from('v_leads').select('*'))); };
+/* ---------- acessos ao CRM (gestor) ---------- */
+async function openAcessos() {
+  var perfis = q(await sb.from('perfis').select('*').order('nome'));
+  S.sheet = { type: 'acessos' };
+  openWide(head('Acessos ao CRM', 'Quem entra com qual e-mail') + '<div class="pb">' +
+    '<div class="tw"><table class="pt left"><thead><tr><th>Nome</th><th>E-mail</th><th>Papel</th><th>Ativo</th></tr></thead><tbody>' +
+    perfis.map(function (p) { return '<tr><td>' + esc(p.nome) + '</td><td>' + esc(p.email) + '</td><td><select class="fld" data-papel="' + esc(p.email) + '">' + optList(['gestor', 'vendas', 'sdr'], p.papel) + '</select></td>' +
+      '<td><input type="checkbox" data-ativo="' + esc(p.email) + '"' + (p.ativo ? ' checked' : '') + ' style="width:22px;height:22px"></td></tr>'; }).join('') + '</tbody></table></div>' +
+    '<p class="note">gestor vê e edita tudo · vendas vê os leads e clientes dele e monta roteiros · sdr vê a prospecção e os leads dele.</p>' +
+    '<div class="lbl">Liberar acesso</div><div class="fgrid">' +
+    '<div><label>Nome no CRM (ex.: Lucas)</label><input class="fld" id="us-nome"></div><div><label>E-mail</label><input class="fld" id="us-email" type="email"></div>' +
+    '<div><label>Papel</label><select class="fld" id="us-papel">' + optList(['sdr', 'vendas', 'gestor'], 'sdr') + '</select></div><div><label>Nome no Olist Tiny</label><input class="fld" id="us-tiny"></div></div>' +
+    '<button class="btn primary" style="width:100%;margin-top:8px" data-act="userSave">Liberar acesso</button>' +
+    '<div class="note">O nome tem que ser igual ao usado nas lojas e leads (Pedro, Lucas, Ian, Yuri). A pessoa entra em crm.indiaostore.com.br com esse e-mail.</div></div>');
 }
-function baixarCSV(nome, linhas) {
-  if (!linhas.length) return;
-  const cols = Object.keys(linhas[0]);
-  const csv = [cols.join(';'), ...linhas.map((l) => cols.map((c) => celulaCSV(l[c])).join(';'))].join('\n');
-  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })); a.download = nome; a.click();
+async function salvarUsuario() {
+  var g = function (id) { return document.getElementById(id).value.trim(); };
+  var d = { nome: g('us-nome'), email: g('us-email').toLowerCase(), papel: g('us-papel'), nome_tiny: g('us-tiny') || null };
+  if (!d.nome || !d.email) { toast('Informe o nome e o e-mail.', true); return; }
+  try { q(await sb.from('perfis').insert(d)); toast('Acesso liberado para ' + d.nome + ' ✓'); openAcessos(); } catch (e) { toast(e.message, true); }
+}
+async function exportar(qual) {
+  try {
+    if (qual === 'expL') baixarCSV('leads.csv', q(await sb.from('v_leads').select('*')));
+    if (qual === 'expX') baixarCSV('prospeccao.csv', q(await sb.from('v_prospeccoes').select('*')));
+    if (qual === 'expPV') baixarCSV('pos-venda.csv', q(await sb.from('pos_venda').select('*')));
+  } catch (e) { toast(e.message, true); }
 }
 
-// ---------- modal ----------
-function abrirModal(html) { $('#modal-corpo').innerHTML = html; $('#modal').hidden = false; document.body.style.overflow = 'hidden'; }
-// Ao fechar a ficha, recarrega a tela atual se algo foi gravado (os filtros são restaurados)
-function fecharModal() {
-  $('#modal').hidden = true; document.body.style.overflow = '';
-  if (S.sujo || S.aba === 'inicio') { S.sujo = false; irPara(S.aba); }
-}
-$('#modal-fechar').onclick = fecharModal;
-$('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') fecharModal(); });
-window.addEventListener('hashchange', () => { if (S.papel && location.hash.slice(1) !== S.aba) irPara(location.hash.slice(1)); });
+/* ---------- eventos da v3 ---------- */
+document.addEventListener('click', function (e) {
+  var t = e.target;
+  if (t.matches && t.matches('.ck')) return; // marcar loja no roteiro não abre a ficha
+  var vc = t.closest && t.closest('[data-vconta]');
+  if (vc && !t.closest('a')) { openConta(vc.dataset.vconta); return; }
+  var el = t.closest && t.closest('[data-act],[data-abre],[data-visedit],[data-prest],[data-apagadesp],[data-comp]');
+  if (!el) return;
+  var d = el.dataset;
+  if (d.abre) { var p = d.abre.split(':'); closeSheet(); if (p[0] === 'prosp') openX(p[1]); else openLead(p[1]); return; }
+  if (d.visedit) { F.visEdit = F.visEdit === d.visedit ? null : d.visedit; visRefresh(); return; }
+  if (d.prest) { prestacaoContas(d.prest).catch(function (er) { toast(er.message, true); }); return; }
+  if (d.comp) { e.preventDefault(); sb.storage.from('comprovantes').createSignedUrl(d.comp, 600).then(function (r) { if (r.error) toast(r.error.message, true); else window.open(r.data.signedUrl, '_blank'); }); return; }
+  if (d.apagadesp) {
+    var dp = (S.prest.desp || []).filter(function (x) { return x.id === d.apagadesp; })[0]; if (!dp) return;
+    if (!confirm('Apagar ' + dp.categoria + ' de ' + dataBR(dp.data) + ' (' + moneyC(dp.valor) + ')? A foto do comprovante também será apagada.')) return;
+    el.disabled = true;
+    sb.from('despesas_viagem').delete().eq('id', dp.id).then(function (r) {
+      if (r.error) { toast(r.error.message, true); return; }
+      if (dp.comprovante_path) sb.storage.from('comprovantes').remove([dp.comprovante_path]);
+      toast('Despesa apagada.'); prestacaoContas(S.prest.r.id);
+    });
+    return;
+  }
+  switch (d.act) {
+    case 'newx': openNewX(); break;
+    case 'saveNewX': saveNewX(false); break;
+    case 'forceNewX': saveNewX(true); break;
+    case 'montar': montarRoteiro(); break;
+    case 'rotSave': salvarRoteiro(); break;
+    case 'viagemSave': salvarViagem(); break;
+    case 'despSave': salvarDespesa(); break;
+    case 'prestCSV': prestCSV(); break;
+    case 'acessos': openAcessos().catch(function (er) { toast(er.message, true); }); break;
+    case 'userSave': salvarUsuario(); break;
+    case 'expL': case 'expX': case 'expPV': exportar(d.act); break;
+    case 'visNew': (async function () {
+      var g = function (id) { return document.getElementById(id).value; };
+      el.disabled = true;
+      try {
+        var user = (await sb.auth.getUser()).data.user;
+        q(await sb.from('visitas').insert({ conta_id: F.conta, situacao: g('vn-sit'), data_visita: g('vn-data') || null, hora: g('vn-hora') || null, observacoes: g('vn-obs') || null, agendado_por: D.me, criado_por: user.email }));
+        toast('Pedido de visita registrado ✓'); F.vis = null; loadVis();
+      } catch (er) { el.disabled = false; toast(er.message, true); }
+    })(); break;
+    case 'visEditSave': (async function () {
+      var g = function (id) { return document.getElementById(id).value; }, v = (F.vis.rows || []).filter(function (x) { return x.id === d.id; })[0];
+      var upd = { situacao: g('ve-sit'), resultado: g('ve-res') || null, valor_pedido: numBR(g('ve-valor')), observacoes: g('ve-obs') || null, data_visita: g('ve-data') || null, hora: g('ve-hora') || null };
+      if (upd.situacao === 'realizada' && v && v.situacao !== 'realizada') upd.checkin_em = new Date().toISOString();
+      if (upd.situacao === 'reagendar' && upd.data_visita && v && upd.data_visita !== v.data_visita) upd.situacao = 'agendada'; // nova data volta a ser visita agendada
+      el.disabled = true;
+      try { var r = q(await sb.from('visitas').update(upd).eq('id', d.id).select('id')); if (!r.length) throw new Error('Sem permissão para alterar esta visita.'); toast('Visita atualizada ✓'); F.visEdit = null; F.vis = null; loadVis(); }
+      catch (er) { el.disabled = false; toast(er.message, true); }
+    })(); break;
+  }
+});
+document.addEventListener('change', function (e) {
+  var t = e.target;
+  if (t.id === 'vRota') { S.rota = t.value; loadVisitas(); }
+  if (t.id === 'vFiltro') { S.vfiltro = t.value; loadVisitas(); }
+  if (t.id === 'vis-rota') {
+    sb.from('contas').update({ rota: t.value || null }).eq('id', F.conta).select('id').then(function (r) {
+      if (r.error || !r.data.length) { toast(r.error ? r.error.message : 'Só o gestor, vendas ou o SDR da loja mudam a rota.', true); return; }
+      if (F.vis && F.vis.conta) F.vis.conta.rota = t.value;
+      toast(t.value ? 'Loja incluída na ' + t.value + ' ✓' : 'Loja tirada das rotas ✓');
+    });
+  }
+  if (t.dataset && t.dataset.papel) sb.from('perfis').update({ papel: t.value }).eq('email', t.dataset.papel).then(function (r) { toast(r.error ? r.error.message : 'Papel atualizado ✓', !!r.error); });
+  if (t.dataset && t.dataset.ativo) sb.from('perfis').update({ ativo: t.checked }).eq('email', t.dataset.ativo).then(function (r) { toast(r.error ? r.error.message : (t.checked ? 'Acesso ativado ✓' : 'Acesso desativado ✓'), !!r.error); });
+});
+document.addEventListener('toggle', function (e) { if (e.target.id === 'd-vis' && e.target.open) loadVis(); }, true);
