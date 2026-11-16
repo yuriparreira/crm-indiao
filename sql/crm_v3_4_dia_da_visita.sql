@@ -1,0 +1,3 @@
+-- CRM v3.4 (16/11/2026): o vendedor escolhe o dia de cada loja; a regra de 3 cidades por dia vira aviso.
+-- Aplicado no Supabase pela migration crm_v3_4_dia_da_visita: visitas.dia (1 a 30), tg_parada_capacidade só bloqueia
+-- Jaguariúna e loja sem cidade, crm_salvar_roteiro recebe p_dias (o dia de cada loja do roteiro).

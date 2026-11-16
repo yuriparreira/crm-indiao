@@ -322,3 +322,31 @@ table.pt.left{min-width:0}
 .vrow:first-child{border-top:0}
 .vrow small{color:var(--muted)}
 @media (min-width:960px){.panel.wide{width:760px}}
+
+/* v3.4: aba Visitas simplificada e visita em destaque */
+details#d-vis{border:2px solid var(--terra);background:var(--terra-soft);border-radius:14px;margin:0 0 14px}
+details#d-vis summary{color:var(--terra-d);font-family:var(--head);font-weight:400;letter-spacing:.05em;text-transform:uppercase;font-size:16px}
+details#d-vis[open]{background:var(--card)}
+.seg-p button{padding:7px 12px;font-size:12.5px}
+.plano{display:grid;margin:6px 0 2px}
+.pdia{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:8px;align-items:baseline;font-size:13.5px;padding:7px 0;border-top:1px solid var(--line)}
+.pdia:first-child{border-top:0}
+.pdia b{font-family:var(--head);font-weight:400;font-size:15px;color:var(--terra-d)}
+.pdia small{color:var(--muted);white-space:nowrap}
+.pdia .sug{color:var(--muted);font-style:normal;font-size:12px}
+.aviso3{font-size:12px;color:var(--today);font-weight:700}
+.vcard{align-items:stretch}
+.vbox{margin-top:8px;background:var(--terra-soft);border:1px solid #EBC9BC;border-radius:12px;padding:8px 10px}
+.vbox-t{font-size:13.5px;color:var(--terra-d);font-weight:600}
+.vbox-t.sem{color:var(--muted2)}
+.dias{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px;align-items:center}
+.dias span{font-size:12px;color:var(--muted2);font-weight:700}
+.dias button{min-width:38px;height:36px;border-radius:10px;border:1px solid var(--line);background:var(--card);font-weight:700;font-size:13.5px;padding:0 8px;color:var(--brown)}
+.dias button.on{background:var(--terra);border-color:var(--terra);color:#fff}
+.chip.marca{border-radius:10px;padding:0 12px;min-height:36px;font-weight:700;font-size:13px}
+.chip.marca.on{background:var(--wa);border-color:var(--wa);color:#fff}
+.vfixa{position:sticky;bottom:calc(66px + env(safe-area-inset-bottom));z-index:6;display:flex;gap:10px;align-items:center;justify-content:space-between;background:var(--brown);color:var(--off);border-radius:14px;padding:10px 12px;margin:14px 0;box-shadow:var(--shadow);font-size:14px}
+.vfixa .btn{min-height:40px;padding:8px 16px}
+details.rots{margin-top:18px}
+details.rots .rot{box-shadow:none}
+@media (min-width:960px){.vfixa{bottom:16px}}
