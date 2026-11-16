@@ -1,0 +1,94 @@
+:root {
+  --preto: #1f1612;
+  --marrom: #6b4226;
+  --marrom-2: #3a2414;
+  --bege: #f2e8da;
+  --bege-2: #e6d2b8;
+  --laranja: #d9782d;
+  --verde: #4f6b3a;
+  --cinza: #8c8580;
+  --branco: #fffdf9;
+  --vermelho: #b3261e;
+  --raio: 10px;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  color: var(--preto);
+  background: var(--bege);
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; background: var(--bege); }
+button, input, select, textarea { font: inherit; }
+a { color: var(--marrom); }
+
+.topo { background: var(--preto); color: var(--bege); display: flex; align-items: center; gap: 12px; padding: 10px 16px; position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
+.marca { font-weight: 800; letter-spacing: 2px; }
+.marca span { color: var(--laranja); }
+nav { display: flex; gap: 4px; flex-wrap: wrap; }
+nav button { background: transparent; color: var(--bege-2); border: 0; padding: 8px 12px; border-radius: 8px; cursor: pointer; }
+nav button.ativa, nav button:hover { background: var(--marrom); color: #fff; }
+.quem { margin-left: auto; font-size: 13px; color: var(--bege-2); display: flex; gap: 8px; align-items: center; }
+.quem button { background: transparent; border: 1px solid var(--marrom); color: var(--bege-2); border-radius: 6px; padding: 3px 8px; cursor: pointer; }
+
+main { padding: 16px; max-width: 1280px; margin: 0 auto; }
+.cartao { background: var(--branco); border-radius: var(--raio); padding: 16px; box-shadow: 0 1px 3px rgb(0 0 0 / 8%); margin-bottom: 14px; }
+.login { max-width: 420px; margin: 60px auto; }
+.login form { display: flex; flex-direction: column; gap: 10px; }
+h1 { font-size: 22px; margin: 0 0 8px; }
+h2 { font-size: 18px; margin: 0 0 10px; }
+h3 { font-size: 15px; margin: 14px 0 6px; color: var(--marrom); }
+.msg { font-size: 14px; color: var(--marrom); }
+
+input, select, textarea { width: 100%; padding: 9px 10px; border: 1px solid var(--bege-2); border-radius: 8px; background: #fff; }
+textarea { min-height: 70px; resize: vertical; }
+label { font-size: 12px; color: var(--marrom); display: block; margin-bottom: 3px; }
+.primario, .botao { border: 0; border-radius: 8px; padding: 9px 14px; cursor: pointer; font-weight: 600; }
+.primario { background: var(--laranja); color: #fff; }
+.botao { background: var(--bege-2); color: var(--marrom-2); }
+.botao.verde { background: var(--verde); color: #fff; }
+.botao.pequeno, .primario.pequeno { padding: 5px 10px; font-size: 13px; }
+.botao:disabled, .primario:disabled { opacity: .5; cursor: default; }
+
+.barra { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; margin-bottom: 12px; }
+.barra > * { flex: 1 1 150px; }
+.barra .acoes { flex: 0 0 auto; display: flex; gap: 8px; }
+
+.kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.kpi { background: var(--branco); border-radius: var(--raio); padding: 12px; border-left: 4px solid var(--laranja); }
+.kpi b { display: block; font-size: 26px; }
+.kpi span { font-size: 13px; color: var(--marrom); }
+
+.tabela { width: 100%; border-collapse: collapse; background: var(--branco); border-radius: var(--raio); overflow: hidden; font-size: 14px; }
+.tabela th { background: var(--marrom-2); color: var(--bege); text-align: left; padding: 8px; font-weight: 600; position: sticky; top: 52px; }
+.tabela td { padding: 8px; border-bottom: 1px solid var(--bege); vertical-align: top; }
+.tabela tr.clicavel { cursor: pointer; }
+.tabela tr.clicavel:hover td { background: #fbf4ea; }
+.vazio { padding: 24px; text-align: center; color: var(--cinza); }
+.contagem { font-size: 13px; color: var(--marrom); margin: 4px 0 8px; }
+
+.selo { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; background: var(--bege); color: var(--marrom-2); white-space: nowrap; }
+.selo.alerta { background: #fde4e1; color: var(--vermelho); }
+.selo.hoje { background: #fff1d6; color: #8a5a00; }
+.selo.ganho { background: var(--verde); color: #fff; }
+.selo.quente { background: #f7d9c4; color: #8a3e0b; }
+.selo.r { background: var(--preto); color: var(--bege); }
+
+.modal { position: fixed; inset: 0; background: rgb(0 0 0 / 45%); display: flex; align-items: flex-start; justify-content: center; padding: 20px 10px; z-index: 20; overflow-y: auto; }
+.modal-caixa { background: var(--bege); border-radius: 14px; width: min(980px, 100%); padding: 18px; position: relative; }
+.fechar { position: absolute; top: 8px; right: 12px; background: transparent; border: 0; font-size: 28px; cursor: pointer; color: var(--marrom); }
+.grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; }
+.grade .largo { grid-column: 1 / -1; }
+.links { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0 10px; }
+.links a { text-decoration: none; background: var(--branco); padding: 5px 10px; border-radius: 8px; font-size: 13px; border: 1px solid var(--bege-2); }
+.colunas { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 760px) { .colunas { grid-template-columns: 1fr; } .tabela .oculta-cel { display: none; } }
+
+.linha-tempo { list-style: none; padding: 0; margin: 0; max-height: 360px; overflow-y: auto; }
+.linha-tempo li { padding: 8px 0; border-bottom: 1px dashed var(--bege-2); font-size: 13px; }
+.linha-tempo small { color: var(--cinza); display: block; }
+
+.aviso { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--preto); color: #fff; padding: 10px 16px; border-radius: 10px; z-index: 30; max-width: 90vw; }
+.aviso.erro { background: var(--vermelho); }
+
+.parada { display: grid; grid-template-columns: 34px 1fr auto; gap: 10px; align-items: start; padding: 10px; border-bottom: 1px solid var(--bege); background: var(--branco); }
+.parada .n { background: var(--laranja); color: #fff; border-radius: 50%; width: 30px; height: 30px; display: grid; place-items: center; font-weight: 700; }
+.parada small { color: var(--marrom); display: block; }
+.dup { background: #fff1d6; border-radius: 8px; padding: 8px 10px; font-size: 13px; margin: 8px 0; }
