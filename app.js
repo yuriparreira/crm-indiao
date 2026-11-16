@@ -1213,12 +1213,6 @@ document.addEventListener('visibilitychange', function () { if (document.visibil
  * v3 · login, nova loja (prospecção), visitas, prestação de contas e acessos
  * ===================================================================== */
 var BASE = { nome: 'Jaguariúna, SP', lat: -22.7056, lng: -46.9858 };
-var ROTAS = {
-  R1: 'Rota da Porteira · RMC e Bragantina', R2: 'Rota da Serra · Sul de Minas', R3: 'Rota do Peão · Ribeirão, Franca, Barretos',
-  R4: 'Rota do Triângulo · Uberaba, Uberlândia', R5: 'Rota do Noroeste · Rio Preto, Araçatuba', R6: 'Rota da Alta Paulista · Bauru, Marília, Prudente',
-  R7: 'Rota do Paranapanema · Sorocaba, Itapeva, Londrina', R8: 'Rota das Araucárias · Curitiba, Ponta Grossa',
-  R9: 'Rota da Washington Luís · Jaguariúna → Rio Preto + 50 km'
-};
 var SEGMENTOS = ['Multimarca country', 'Selaria / agro com vestuário', 'Boutique feminina country', 'Loja de rodeio / eventos', 'Outro'];
 var ORIGENS_X = ['Google Maps', 'Instagram', 'Indicação', 'Feira / Evento', 'Show Us Agroboy', 'Visita presencial', 'Outro'];
 var CATEGORIAS_DESP = ['Combustível', 'Hotel, pedágio e estacionamento', 'Alimentação', 'Manutenção do veículo'];
@@ -1281,7 +1275,8 @@ document.getElementById('sair').addEventListener('click', sair);
 
 function iniciar() {
   document.getElementById('view').innerHTML = '<div class="boot"><div>' + penaSvg() + '<p>Carregando o CRM…</p></div></div>';
-  call('crmReload').then(function (nd) {
+  Promise.all([call('crmReload'), carregarRotas().catch(function () { return []; })]).then(function (res) {
+    var nd = res[0];
     D = nd; indexLists(); LOGADO = true;
     S.vend = D.admin ? 'Todos' : D.me;
     document.getElementById('top').classList.remove('anon');
@@ -1343,15 +1338,30 @@ function saveNewX(force) {
   }).catch(function (e) { busy(btn, false, 'Salvar loja'); toast(e.message || 'Não consegui salvar', true); });
 }
 
+/* ---------- rotas (tabela rotas + rota_paradas no Supabase) ---------- */
+var ROTAS_DB = [];
+var UFS_ROTA = ['SP', 'MG', 'PR', 'GO', 'MS', 'MT', 'RO', 'RJ', 'SC', 'RS'];
+function carregarRotas() { return sb.from('rotas').select('*').eq('ativa', true).order('ordem').then(function (r) { ROTAS_DB = q(r) || []; return ROTAS_DB; }); }
+function rotaInfo(cod) { return ROTAS_DB.filter(function (r) { return r.codigo === cod; })[0]; }
+function rotasVisita() { return ROTAS_DB.filter(function (r) { return r.codigo !== 'A planejar'; }); }
+function chaveCidade(t) { return String(t || '').replace(/\s*\(.*\)\s*$/, '').trim().normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); }
+function rotaOpts(sel, vazio) {
+  return (vazio !== undefined ? '<option value="">' + esc(vazio) + '</option>' : '') +
+    rotasVisita().map(function (r) { return '<option value="' + esc(r.codigo) + '"' + (r.codigo === sel ? ' selected' : '') + '>' + esc(r.codigo + ' · ' + r.nome) + '</option>'; }).join('') +
+    '<option value="A planejar"' + (sel === 'A planejar' ? ' selected' : '') + '>A planejar</option>';
+}
+
 /* ---------- visita presencial e rota, dentro da ficha ---------- */
 function visBlock() { return '<details id="d-vis"><summary>📍 Visita presencial e rota</summary><div id="visBox">' + visHtml() + '</div></details>'; }
 function visHtml() {
   if (!F || !F.conta) return '';
   if (!F.vis) return '<p class="note">Toque para carregar…</p>';
-  var c = F.vis.conta || {}, rows = F.vis.rows || [];
-  var h = '<div class="f"><label>Rota de visita</label><select class="fld" id="vis-rota"><option value="">— fora das rotas —</option>' +
-    Object.keys(ROTAS).map(function (r) { return '<option value="' + r + '"' + (c.rota === r ? ' selected' : '') + '>' + r + ' · ' + esc(ROTAS[r]) + '</option>'; }).join('') + '</select></div>' +
-    (c.endereco ? '<div class="note"><b>Endereço:</b> ' + esc(c.endereco) + '</div>' : '<div class="note">Sem endereço: a rota usa o centro da cidade. Anote o endereço para o roteiro ficar certo.</div>');
+  var c = F.vis.conta || {}, rows = F.vis.rows || [], rr = F.vis.rotas || [];
+  var h = '<div class="f"><label>Rota de visita</label><select class="fld" id="vis-rota">' + rotaOpts(c.rota || '', '— fora das rotas —') + '</select></div>' +
+    (rr.length ? '<div class="note">Entra em: ' + rr.map(function (x) {
+      return '<b>' + esc(x.rota) + '</b> dia ' + x.dia + (x.via === 'avulsa' ? ' (incluída avulsa)' : '') + (x.sugerida ? ' (cidade sugerida, falta confirmar)' : '');
+    }).join(' · ') + '</div>' : (c.rota === 'A planejar' ? '<div class="note">Etiqueta <b>A planejar</b>: ainda não entra em nenhuma rota.' + (c.rota_anterior ? ' Rota antiga: ' + esc(c.rota_anterior) + '.' : '') + '</div>' : '')) +
+    (c.endereco ? '<div class="note"><b>Endereço:</b> ' + esc(c.endereco) + '</div>' : '<div class="note">Sem endereço: o roteiro usa o centro da cidade. Anote o endereço para o roteiro ficar certo.</div>');
   h += '<div class="lbl">Visitas</div>' + (rows.length ? rows.map(function (v) {
     var edit = F.visEdit === v.id;
     return '<div class="vrow"><div><b>' + esc(v.situacao) + '</b> ' + (v.data_visita ? dataBR(v.data_visita) : '') + ' ' + esc(v.hora || '') +
@@ -1381,14 +1391,20 @@ function loadVis(force) {
   var conta = F.conta, fid = F.id;
   Promise.all([
     sb.from('visitas').select('*').eq('conta_id', conta).order('criado_em', { ascending: false }),
-    sb.from('contas').select('id,nome,rota,endereco,cidade,uf').eq('id', conta).single()
+    sb.from('contas').select('id,nome,rota,rota_anterior,endereco,cidade,uf').eq('id', conta).single(),
+    sb.rpc('crm_rotas_da_conta', { p_conta: conta }),
+    ROTAS_DB.length ? Promise.resolve(null) : carregarRotas()
   ]).then(function (r) {
     if (!F || F.id !== fid) return;
-    F.vis = { rows: q(r[0]), conta: q(r[1]) };
+    F.vis = { rows: q(r[0]), conta: q(r[1]), rotas: q(r[2]) || [] };
     var el = document.getElementById('visBox'); if (el) el.innerHTML = visHtml();
   }).catch(function (e) { toast(e.message, true); });
 }
 function visRefresh() { var el = document.getElementById('visBox'); if (el) el.innerHTML = visHtml(); }
+// a etiqueta de rota que aparece nas fichas carregadas (D) acompanha a mudança
+function atualizarRotaLocal(conta, rota) {
+  D.leads.concat(D.pv, D.prosp ? D.prosp.rows : []).forEach(function (o) { if (o.conta === conta) o.rota = rota; });
+}
 
 /* ---------- loja sem ficha na sua carteira (ex.: aba Visitas) ---------- */
 function openConta(id) {
@@ -1402,66 +1418,145 @@ function openConta(id) {
   if (x) return openX(x.id);
   if (lead) return openLead(lead.id);
   sb.from('contas').select('*').eq('id', id).single().then(function (r) {
-    var c = q(r), vc = (S.vcache || {}), px = (vc.mp || {})[id], lx = (vc.ml || {})[id];
+    var c = q(r), loja = ((S.vcache || {}).lista || []).filter(function (z) { return z.id === id; })[0] || {}, px = loja.prosp, lx = loja.lead;
     S.sheet = { type: 'conta', id: id };
     F = { id: 'conta:' + id, conta: id, vis: null };
     var h = head(c.nome, [c.cidade, c.uf].filter(Boolean).join('/')) + '<div class="pb">' +
       contactRow(c.whatsapp || c.telefone, '', c.email, waUrl(c.whatsapp || c.telefone, ''), igUrl(c.instagram), mapUrl(c.nome, c.cidade, c.uf)) +
       '<div class="meta">' + (px ? pill(px.status, XST) : '') + (lx ? pill(lx.status) : '') + (c.segmento ? '<span class="tag">' + esc(c.segmento) + '</span>' : '') + '</div>' +
-      '<div class="note">' + (px && px.sdr ? 'Prospecção ' + esc(px.codigo) + ' com ' + esc(px.sdr) + '. ' : '') + (lx ? 'Lead ' + esc(lx.codigo) + (lx.responsavel ? ' com ' + esc(lx.responsavel) : '') + '. ' : '') +
-      'A ficha completa fica com quem cuida da loja.</div>' + visBlock() + '</div>';
+      '<div class="note">' + (px && px.sdr ? 'Prospecção ' + esc(px.codigo) + ' com ' + esc(px.sdr) + '. ' : '') + (lx ? 'Lead ' + esc(lx.codigo) + (lx.resp ? ' com ' + esc(lx.resp) : '') + '. ' : '') +
+      (px || lx ? 'A ficha completa fica com quem cuida da loja.' : 'Loja sem prospecção nem lead ativo no CRM.') + '</div>' + visBlock() + '</div>';
     openSheet(h);
     var d = document.getElementById('d-vis'); if (d) { d.open = true; loadVis(); }
   }).catch(function (e) { toast(e.message, true); });
 }
 
-/* ---------- aba Visitas: lojas da rota, roteiro e prestação de contas ---------- */
+/* ---------- aba Visitas: percurso por dia, lojas da rota, roteiro e prestação de contas ---------- */
 function viewVisitas() {
-  return '<h1>Visitas</h1><div class="date">Rotas presenciais · saída de Jaguariúna</div><div id="visRoot"><div class="boot"><div>' + penaSvg() + '<p>Carregando as lojas da rota…</p></div></div></div>';
+  return '<h1>Visitas</h1><div class="date">Rotas presenciais do ' + esc((D.prosp && D.prosp.closer) || 'Pedro') + ' · no máximo 3 cidades por dia</div><div id="visRoot"><div class="boot"><div>' + penaSvg() + '<p>Carregando a rota…</p></div></div></div>';
 }
-function loadVisitas() {
-  var rota = S.rota || 'R9', filtro = S.vfiltro || 'todas';
-  Promise.all([
-    sb.from('contas').select('id,nome,cidade,uf,endereco,whatsapp,telefone,lat,lng,rota').eq('rota', rota).order('cidade'),
-    sb.from('v_prospeccoes').select('conta_id,codigo,status,sdr').eq('rota', rota),
-    sb.from('v_leads').select('conta_id,codigo,status,tipo_status,responsavel').eq('rota', rota),
-    sb.from('visitas').select('*').in('situacao', ['a agendar', 'agendada', 'reagendar'])
-  ]).then(function (r) {
+// km de cada dia: rotas com base (saída = chegada) voltam para a base todo dia; as outras seguem de onde pararam
+function kmDias(rota, paradas) {
+  var base = rota.partida_lat ? { lat: rota.partida_lat, lng: rota.partida_lng } : BASE;
+  var fim = rota.chegada_lat ? { lat: rota.chegada_lat, lng: rota.chegada_lng } : base;
+  var idaVolta = (rota.partida || '') === (rota.chegada || '');
+  var dias = {}, ult = 0;
+  paradas.filter(function (p) { return !p.sugerida && p.lat; }).forEach(function (p) { (dias[p.dia] = dias[p.dia] || []).push(p); ult = Math.max(ult, p.dia); });
+  var out = {}, atual = base;
+  Object.keys(dias).map(Number).sort(function (a, b) { return a - b; }).forEach(function (d) {
+    var km = 0; if (idaVolta) atual = base;
+    dias[d].sort(function (a, b) { return a.ordem - b.ordem; }).forEach(function (p) { km += distKm(atual, p); atual = p; });
+    if (idaVolta) km += distKm(atual, base); else if (d === ult) km += distKm(atual, fim);
+    out[d] = Math.round(km * 1.25);
+  });
+  return out;
+}
+function cidadesNoDia(paradas, dia) {
+  var k = {};
+  paradas.filter(function (p) { return !p.sugerida && p.dia === dia; }).forEach(function (p) { k[chaveCidade(p.cidade || (p.contas || {}).cidade)] = 1; });
+  return Object.keys(k).length;
+}
+function statusLoja(c) {
+  if (c.cliente) return 'cliente';
+  if (c.lead && c.lead.tipo === 'Aberto') return 'lead';
+  if (c.prosp && ['8. Qualificado → Pedro', '9. Virou cliente', '0. Já é cliente'].indexOf(c.prosp.status) >= 0) return 'lead';
+  if (c.prosp && ['5. Sem interesse', '6. Fora do ICP'].indexOf(c.prosp.status) >= 0) return 'fora';
+  if (c.prosp) return 'prosp';
+  return 'historico';
+}
+async function loadVisitas() {
+  try {
+    if (!ROTAS_DB.length) await carregarRotas();
+    var rota = S.rota && rotaInfo(S.rota) ? S.rota : ((rotasVisita()[0] || {}).codigo || 'A planejar');
+    var filtro = S.vfiltro || 'ativas', info = rotaInfo(rota) || { codigo: rota, nome: rota };
+    S.rota = rota;
+    var r = await Promise.all([
+      sb.rpc('crm_rota_lojas', { p_rota: rota }),
+      rota === 'A planejar' ? Promise.resolve({ data: [] }) : sb.from('rota_paradas').select('*, contas(nome,cidade,uf)').eq('rota', rota).order('dia').order('ordem'),
+      sb.from('visitas').select('*').in('situacao', ['a agendar', 'agendada', 'reagendar'])
+    ]);
     var root = document.getElementById('visRoot'); if (!root || S.tab !== 'visitas') return;
-    var contas = q(r[0]), pros = q(r[1]), lds = q(r[2]), vis = q(r[3]);
-    var mp = {}, ml = {}, mv = {};
-    pros.forEach(function (p) { mp[p.conta_id] = p; });
-    lds.forEach(function (l) { if (!ml[l.conta_id] || l.tipo_status === 'Aberto') ml[l.conta_id] = l; });
-    vis.forEach(function (v) { if (!mv[v.conta_id] || !v.roteiro_id) mv[v.conta_id] = v; });
-    var lista = contas.filter(function (c) { return ['6. Fora do ICP', '5. Sem interesse'].indexOf((mp[c.id] || {}).status) < 0; });
+    var lojas = q(r[0]) || [], paradas = q(r[1]) || [], vis = q(r[2]) || [];
+    var mv = {}; vis.forEach(function (v) { if (!mv[v.conta_id] || !v.roteiro_id) mv[v.conta_id] = v; });
+    var lista = lojas.filter(function (c) { return statusLoja(c) !== 'fora'; });
+    if (filtro === 'ativas') lista = lista.filter(function (c) { return statusLoja(c) !== 'historico' || mv[c.id]; });
     if (filtro === 'agendadas') lista = lista.filter(function (c) { return mv[c.id]; });
-    if (filtro === 'quentes') lista = lista.filter(function (c) {
-      var l = ml[c.id] || {}, p = mp[c.id] || {};
-      return l.tipo_status === 'Aberto' || l.status === 'Pedido fechado' || ['8. Qualificado → Pedro', '0. Já é cliente', '9. Virou cliente'].indexOf(p.status) >= 0;
-    });
-    S.vcache = { lista: lista, mp: mp, ml: ml, mv: mv };
+    if (filtro === 'quentes') lista = lista.filter(function (c) { var s = statusLoja(c); return s === 'lead' || s === 'cliente'; });
+    S.vcache = { lista: lista, mv: mv, paradas: paradas, rota: info };
     var pode = podeRoteiro();
-    var h = '<div class="vis-bar"><div><label>Rota</label><select class="fld" id="vRota">' +
-      Object.keys(ROTAS).map(function (k) { return '<option value="' + k + '"' + (k === rota ? ' selected' : '') + '>' + k + ' · ' + esc(ROTAS[k]) + '</option>'; }).join('') + '</select></div>' +
+    var nPlanejar = '';
+    var h = '<div class="vis-bar"><div><label>Rota</label><select class="fld" id="vRota">' + rotaOpts(rota) + '</select></div>' +
       '<div><label>Mostrar</label><select class="fld" id="vFiltro">' +
-      [['todas', 'Todas as lojas da rota'], ['agendadas', 'Só com visita pedida ou agendada'], ['quentes', 'Clientes, qualificados e leads abertos']].map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === filtro ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select></div>' +
-      (pode ? '<div><button class="btn primary" data-act="montar" id="btnMontar">Montar roteiro com as marcadas</button></div>' : '') + '</div>' +
-      '<p class="hint" style="color:var(--muted);font-size:13px;margin:-4px 0 12px">' + (pode
-        ? 'Marque as lojas e monte o roteiro: a ordem sai de Jaguariúna pela loja mais próxima. Endereços sem coordenada são localizados uma vez (OpenStreetMap) e ficam salvos.'
-        : 'Peça visitas pela ficha de cada loja; o ' + esc((D.prosp && D.prosp.closer) || 'Pedro') + ' monta o roteiro.') + '</p>';
-    h += lista.length ? '<section class="sec"><h2>Lojas da rota <span class="n">' + lista.length + '</span></h2><div class="list two">' + lista.map(function (c) {
-      var p = mp[c.id], l = ml[c.id], v = mv[c.id];
-      return '<article class="card' + (v && !v.roteiro_id ? ' c-orange' : '') + '" data-vconta="' + esc(c.id) + '">' +
-        (pode ? '<input type="checkbox" class="ck v-marca" value="' + esc(c.id) + '"' + (v && !v.roteiro_id ? ' checked' : '') + ' aria-label="Incluir no roteiro">' : '') +
-        '<div class="cm"><div class="ct"><b>' + esc(c.nome) + '</b>' + (l ? pill(l.status) : p ? pill(p.status, XST) : '') + '</div>' +
-        '<div class="cs">' + esc([c.cidade, c.uf].filter(Boolean).join('/')) + (c.endereco ? ' · ' + esc(c.endereco) : ' · sem endereço') + '</div>' +
-        '<div class="cn ' + (v ? 't-orange' : 't-muted') + '">' + (v ? 'Visita ' + esc(v.situacao) + (v.data_visita ? ' · ' + br(v.data_visita) : '') + (v.hora ? ' ' + esc(v.hora) : '') + (v.roteiro_id ? ' · em roteiro' : '') :
-          (p && p.sdr ? 'SDR ' + esc(p.sdr) : '') + (l && l.responsavel ? (p && p.sdr ? ' · ' : '') + 'lead com ' + esc(l.responsavel) : '')) + '</div></div></article>';
-    }).join('') + '</div></section>' : '<div class="empty">' + penaSvg() + '<p>Nenhuma loja nesta rota com esse filtro.</p></div>';
+      [['ativas', 'Lojas em prospecção, leads e clientes'], ['todas', 'Todas, inclusive histórico do RD'], ['agendadas', 'Só com visita pedida ou agendada'], ['quentes', 'Clientes, qualificados e leads abertos']]
+        .map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === filtro ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select></div>' +
+      (pode && rota !== 'A planejar' ? '<div><button class="btn primary" data-act="montar" id="btnMontar">Montar roteiro com as marcadas</button></div>' : '') + '</div>';
+    if (rota !== 'A planejar') h += percursoHtml(info, paradas, lojas, pode);
+    else h += '<p class="hint" style="color:var(--muted);font-size:13px;margin:-4px 0 12px">Lojas que tinham rota antiga e ficaram fora das rotas novas. ' + (pode ? 'Use “Incluir em” para colocar a loja no percurso de uma rota, ou inclua a cidade dela numa rota.' : 'O gestor e o Pedro incluem essas lojas nas rotas.') + '</p>';
+    h += lojasHtml(rota, lista, mv, pode);
     h += '<div id="vRots"></div>';
     root.innerHTML = h;
     loadRoteiros();
-  }).catch(function (e) { toast(e.message, true); });
+  } catch (e) { toast(e.message, true); }
+}
+function percursoHtml(info, paradas, lojas, pode) {
+  var porCidade = {};
+  lojas.forEach(function (c) { if (statusLoja(c) !== 'fora' && statusLoja(c) !== 'historico') { var k = chaveCidade(c.cidade); porCidade[k] = (porCidade[k] || 0) + 1; } });
+  var km = kmDias(info, paradas), maxDia = paradas.reduce(function (m, p) { return Math.max(m, p.dia); }, 0);
+  var dias = []; for (var d = 1; d <= maxDia; d++) if (paradas.some(function (p) { return p.dia === d; })) dias.push(d);
+  var diaOpts = function (sel) { var o = ''; for (var i = 1; i <= maxDia + 1; i++) o += '<option value="' + i + '"' + (i === sel ? ' selected' : '') + '>Dia ' + i + (i > maxDia ? ' (novo)' : '') + '</option>'; return o; };
+  var h = '<div class="rot"><h3>' + esc(info.codigo + ' · ' + info.nome) + '</h3><p class="quando">Saída: ' + esc(info.partida || '—') + ' · chegada: ' + esc(info.chegada || '—') +
+    (info.observacao ? '<br>' + esc(info.observacao) : '') + '</p>';
+  dias.forEach(function (d) {
+    var ps = paradas.filter(function (p) { return p.dia === d; }), n = cidadesNoDia(paradas, d);
+    h += '<div class="lbl">Dia ' + d + ' <small>' + n + ' de 3 cidades' + (km[d] ? ' · ~' + km[d] + ' km' : '') + '</small></div>';
+    h += ps.map(function (p) {
+      var nome = p.conta_id ? '🏬 ' + ((p.contas || {}).nome || 'Loja') + ' · ' + ((p.contas || {}).cidade || '') : (p.cidade + (p.uf && p.uf !== 'SP' ? '/' + p.uf : ''));
+      var nl = p.conta_id ? '' : (porCidade[chaveCidade(p.cidade)] || 0);
+      return '<div class="vrow"><div><b>' + esc(nome) + '</b>' + (p.sugerida ? ' <span class="tag red">sugestão</span>' : '') +
+        (p.conta_id ? ' <span class="tag">loja avulsa</span>' : ' <small>' + (nl ? nl + (nl > 1 ? ' lojas' : ' loja') + ' no CRM' : 'sem lojas no CRM ainda') + '</small>') +
+        (p.motivo ? '<br><small>' + esc(p.motivo) + '</small>' : '') + '</div>' +
+        (pode ? '<div style="display:flex;gap:6px;align-items:center;flex:none"><select class="fld" style="width:auto;padding:6px 8px;font-size:13px" data-pdia="' + esc(p.id) + '">' + diaOpts(p.dia) + '</select>' +
+          (p.sugerida ? '<button class="chip" data-pok="' + esc(p.id) + '" title="Confirmar na rota">✓</button>' : '') +
+          '<button class="chip" data-pdel="' + esc(p.id) + '" title="Tirar da rota">×</button></div>' : '') + '</div>';
+    }).join('');
+  });
+  if (!dias.length) h += '<p class="note">Rota sem cidades ainda.</p>';
+  if (pode) {
+    var livre = 1; while (livre <= maxDia && cidadesNoDia(paradas, livre) >= 3) livre++;
+    h += '<details style="margin-top:12px"><summary>+ Incluir cidade ou loja no percurso</summary>' +
+      '<div class="lbl">Cidade</div><div class="fgrid"><div class="full"><label>Cidade</label><input class="fld" id="pc-cidade" placeholder="Ex.: Votuporanga"></div>' +
+      '<div><label>UF</label><select class="fld" id="pc-uf">' + optList(UFS_ROTA, 'SP') + '</select></div>' +
+      '<div><label>Dia</label><select class="fld" id="pc-dia">' + diaOpts(livre) + '</select></div></div>' +
+      '<button class="btn dark" style="width:100%;margin-top:8px" data-act="paradaCidade">Incluir cidade</button>' +
+      '<div class="lbl">Loja (cliente ou prospect de outra cidade)</div><div class="fgrid"><div class="full"><label>Nome da loja</label><input class="fld" id="pc-busca" placeholder="Digite 3 letras do nome"></div>' +
+      '<div><label>Dia</label><select class="fld" id="pc-dia2">' + diaOpts(livre) + '</select></div></div><div id="pc-res"></div>' +
+      '<div class="note">Máximo de 3 cidades por dia. Uma loja de cidade que já está no dia não conta como cidade nova.</div></details>';
+  }
+  return h + '</div>';
+}
+function lojasHtml(rota, lista, mv, pode) {
+  if (!lista.length) return '<div class="empty">' + penaSvg() + '<p>Nenhuma loja com esse filtro.' + (rota !== 'A planejar' ? ' Inclua cidades ou lojas no percurso acima.' : '') + '</p></div>';
+  var grupos = [], idx = {};
+  lista.forEach(function (c) {
+    var g = rota === 'A planejar' ? (c.uf || '—') + ' · ' + (c.cidade || 'sem cidade') : (c.sugerida ? 'Cidades sugeridas (confirmar no percurso)' : 'Dia ' + c.dia + ' · ' + (c.via === 'avulsa' ? 'lojas avulsas' : c.cidade));
+    if (!(g in idx)) { idx[g] = grupos.length; grupos.push([g, []]); }
+    grupos[idx[g]][1].push(c);
+  });
+  return '<section class="sec"><h2>' + (rota === 'A planejar' ? 'A planejar' : 'Lojas da rota') + ' <span class="n">' + lista.length + '</span></h2>' + grupos.map(function (g) {
+    return '<div class="lbl">' + esc(g[0]) + ' <small>' + g[1].length + '</small></div><div class="list two">' + g[1].map(function (c) {
+      var v = mv[c.id], st = c.lead && c.lead.tipo === 'Aberto' ? pill(c.lead.status) : c.prosp ? pill(c.prosp.status, XST) : c.cliente ? pill('Ativo', PST) : '';
+      var quem = [c.prosp && c.prosp.sdr ? 'SDR ' + c.prosp.sdr : '', c.lead && c.lead.resp && c.lead.tipo === 'Aberto' ? 'lead com ' + c.lead.resp : '', c.cliente ? 'cliente' : ''].filter(Boolean).join(' · ');
+      return '<article class="card' + (v && !v.roteiro_id ? ' c-orange' : '') + '" data-vconta="' + esc(c.id) + '">' +
+        (pode && rota !== 'A planejar' ? '<input type="checkbox" class="ck v-marca" value="' + esc(c.id) + '"' + (v && !v.roteiro_id ? ' checked' : '') + ' aria-label="Incluir no roteiro">' : '') +
+        '<div class="cm"><div class="ct"><b>' + esc(c.nome) + '</b>' + st + '</div>' +
+        '<div class="cs">' + esc([c.cidade, c.uf].filter(Boolean).join('/')) + (c.endereco ? ' · ' + esc(c.endereco) : ' · sem endereço') + '</div>' +
+        '<div class="cn ' + (v ? 't-orange' : 't-muted') + '">' + (v ? 'Visita ' + esc(v.situacao) + (v.data_visita ? ' · ' + br(v.data_visita) : '') + (v.hora ? ' ' + esc(v.hora) : '') + (v.roteiro_id ? ' · em roteiro' : '') : esc(quem || (c.prosp ? 'prospecção sem SDR' : c.lead ? 'lead ' + c.lead.status : 'histórico do RD'))) +
+        (rota === 'A planejar' && c.rota_anterior ? ' · rota antiga ' + esc(c.rota_anterior) : '') + '</div>' +
+        (pode && rota === 'A planejar' ? '<div class="qa"><select class="fld" style="width:auto;padding:6px 10px;font-size:13px" data-incluir="' + esc(c.id) + '"><option value="">Incluir em…</option>' +
+          rotasVisita().map(function (r) { return '<option value="' + esc(r.codigo) + '">' + esc(r.codigo) + '</option>'; }).join('') + '</select></div>' : '') +
+        '</div></article>';
+    }).join('') + '</div>';
+  }).join('') + '</section>';
 }
 var ROT_SEL = '*, visitas(id,ordem,situacao,resultado,valor_pedido,data_visita,hora,conta_id,contas(nome,cidade,uf,endereco,whatsapp,telefone))';
 function loadRoteiros() {
@@ -1474,15 +1569,17 @@ function loadRoteiros() {
       var ped = vs.reduce(function (s, v) { return s + (Number(v.valor_pedido) || 0); }, 0);
       return '<div class="rot"><h3>' + esc(rt.nome) + ' ' + pill(rt.status) + '</h3><p class="quando">' + (rt.data_inicio ? dataBR(rt.data_inicio) + ' a ' + dataBR(rt.data_fim) + ' · ' : '') +
         vs.length + ' paradas · ' + feitas + ' realizadas · pedidos ' + money(ped || 0) + ' · ~' + (rt.km_previsto || '?') + ' km · previsto ' + moneyC(rt.custo_previsto) + (rt.custo_real ? ' · real ' + moneyC(rt.custo_real) : '') + '</p>' +
-        '<div class="links"><button data-prest="' + esc(rt.id) + '">🧾 Prestação de contas</button>' + mapsTrechos(vs.map(function (v) { return v.contas || {}; })).map(function (u, k) { return '<a target="_blank" rel="noopener" href="' + esc(u) + '">🗺️ Trecho ' + (k + 1) + '</a>'; }).join('') + '</div>' +
+        '<div class="links"><button data-prest="' + esc(rt.id) + '">🧾 Prestação de contas</button>' + mapsTrechos(vs.map(function (v) { return v.contas || {}; }), rotaInfo(rt.rota)).map(function (u, k) { return '<a target="_blank" rel="noopener" href="' + esc(u) + '">🗺️ Trecho ' + (k + 1) + '</a>'; }).join('') + '</div>' +
         vs.map(function (v) { var c = v.contas || {}; return '<div class="parada clic" data-vconta="' + esc(v.conta_id) + '"><div class="n">' + (v.ordem || '-') + '</div><div><b>' + esc(c.nome) + '</b><small>' + esc(c.cidade || '') + ' · ' + esc(v.situacao) + (v.data_visita ? ' ' + br(v.data_visita) : '') + ' ' + esc(v.hora || '') + (v.resultado ? ' · ' + esc(v.resultado) : '') + '</small></div>' +
           (waUrl(c.whatsapp || c.telefone, '') ? '<a class="go" target="_blank" rel="noopener" href="' + esc(waUrl(c.whatsapp || c.telefone, '')) + '" aria-label="WhatsApp">' + ICON.chat + '</a>' : '<span></span>') + '</div>'; }).join('') + '</div>';
     }).join('') + '</section>' : '';
   }).catch(function (e) { toast(e.message, true); });
 }
-function mapsTrechos(contas) {
+// links do Google Maps: da saída da rota até a chegada, em trechos de até 10 pontos
+function mapsTrechos(contas, rota) {
+  var ini = rota && rota.partida ? rota.partida : BASE.nome, fim = rota && rota.chegada ? rota.chegada : ini;
   var pts = contas.map(function (c) { return [c.endereco, c.cidade, c.uf].filter(Boolean).join(', ') || c.nome; });
-  var todos = [BASE.nome].concat(pts, [BASE.nome]), out = [];
+  var todos = [ini].concat(pts, [fim]), out = [];
   for (var k = 0; k < todos.length - 1; k += 9) out.push('https://www.google.com/maps/dir/' + todos.slice(k, k + 10).map(encodeURIComponent).join('/'));
   return out;
 }
@@ -1490,19 +1587,21 @@ function distKm(a, b) { var R = 6371, rad = Math.PI / 180, dLa = (b.lat - a.lat)
 function esperar(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 async function geocodificar(c) {
   if (c.lat && c.lng) return c;
+  if (!c.endereco) return c; // sem endereço: usa o centro da cidade da rota
   try {
     await esperar(1100); // limite do OpenStreetMap: 1 consulta por segundo
     var js = await (await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=' + encodeURIComponent([c.endereco, c.cidade, c.uf, 'Brasil'].filter(Boolean).join(', ')))).json();
-    var porCidade = false;
-    if (!js.length && c.cidade) { await esperar(1100); js = await (await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=' + encodeURIComponent([c.cidade, c.uf, 'Brasil'].join(', ')))).json(); porCidade = true; }
-    if (js.length) {
-      c.lat = +js[0].lat; c.lng = +js[0].lon;
-      // só grava a coordenada exata do endereço; a do centro da cidade serve só para ordenar este roteiro
-      if (!porCidade) await sb.from('contas').update({ lat: c.lat, lng: c.lng }).eq('id', c.id);
-    }
+    if (js.length) { c.lat = +js[0].lat; c.lng = +js[0].lon; await sb.from('contas').update({ lat: c.lat, lng: c.lng }).eq('id', c.id); }
   } catch (e) { console.warn('geocodificação falhou', c.nome, e); }
   return c;
 }
+async function geoCidade(cidade, uf) {
+  try {
+    var js = await (await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=' + encodeURIComponent([cidade, uf, 'Brasil'].join(', ')))).json();
+    return js.length ? { lat: +js[0].lat, lng: +js[0].lon } : null;
+  } catch (e) { return null; }
+}
+// roteiro na ordem do percurso (dia e ordem das cidades); dentro de cada cidade, da loja mais próxima para a seguinte
 async function montarRoteiro() {
   if (!podeRoteiro()) { toast('Só o gestor e vendas montam roteiros.', true); return; }
   var bt = document.getElementById('btnMontar'); if (!bt || bt.disabled) return;
@@ -1510,22 +1609,36 @@ async function montarRoteiro() {
   if (!ids.length) { toast('Marque as lojas do roteiro.', true); return; }
   bt.disabled = true;
   try {
-    var contas = S.vcache.lista.filter(function (c) { return ids.indexOf(c.id) >= 0; }).map(function (c) { return Object.assign({}, c); });
-    var falta = contas.filter(function (c) { return !c.lat; }).length, i = 0;
-    for (var c of contas) { if (!c.lat) { bt.textContent = 'Localizando ' + (++i) + ' de ' + falta + '…'; } await geocodificar(c); }
-    var comCoord = contas.filter(function (c) { return c.lat; }), semCoord = contas.filter(function (c) { return !c.lat; });
-    var ordem = [], atual = BASE, resto = comCoord.slice(), km = 0;
-    while (resto.length) { resto.sort(function (a, b) { return distKm(atual, a) - distKm(atual, b); }); var prox = resto.shift(); km += distKm(atual, prox); ordem.push(prox); atual = prox; }
-    km += ordem.length ? distKm(atual, BASE) : 0;
-    var fin = ordem.concat(semCoord), rota = S.rota || 'R9', kmR = Math.round(km * 1.25);
-    S.rotDraft = { fin: fin, rota: rota, km: kmR };
+    var vc = S.vcache, info = vc.rota, paradas = vc.paradas || [];
+    var coordCidade = {}; paradas.forEach(function (p) { if (p.lat && p.cidade) coordCidade[chaveCidade(p.cidade)] = { lat: p.lat, lng: p.lng }; });
+    var contas = vc.lista.filter(function (c) { return ids.indexOf(c.id) >= 0; }).map(function (c) { return Object.assign({}, c); });
+    var falta = contas.filter(function (c) { return !c.lat && c.endereco; }).length, i = 0;
+    for (var c of contas) { if (!c.lat && c.endereco) { bt.textContent = 'Localizando ' + (++i) + ' de ' + falta + '…'; await geocodificar(c); } }
+    contas.forEach(function (c) { var cc = coordCidade[chaveCidade(c.cidade)]; c._p = c.lat ? { lat: c.lat, lng: c.lng } : cc || null; });
+    var base = info.partida_lat ? { lat: info.partida_lat, lng: info.partida_lng } : BASE;
+    var fim = info.chegada_lat ? { lat: info.chegada_lat, lng: info.chegada_lng } : base;
+    var idaVolta = (info.partida || '') === (info.chegada || '');
+    var grupos = {}; contas.forEach(function (c) { var g = (c.sugerida ? 99 : (c.dia || 98)) * 1000 + (c.pordem || 0); (grupos[g] = grupos[g] || []).push(c); });
+    var ordem = [], atual = base, km = 0, diaAnt = null;
+    Object.keys(grupos).map(Number).sort(function (a, b) { return a - b; }).forEach(function (g) {
+      var dia = Math.floor(g / 1000);
+      if (idaVolta && diaAnt !== null && dia !== diaAnt) { km += distKm(atual, base); atual = base; }
+      diaAnt = dia;
+      var resto = grupos[g].filter(function (c) { return c._p; }), sem = grupos[g].filter(function (c) { return !c._p; });
+      while (resto.length) { resto.sort(function (a, b) { return distKm(atual, a._p) - distKm(atual, b._p); }); var prox = resto.shift(); km += distKm(atual, prox._p); ordem.push(prox); atual = prox._p; }
+      ordem = ordem.concat(sem);
+    });
+    km += distKm(atual, fim);
+    var kmR = Math.round(km * 1.25), semLocal = ordem.filter(function (c) { return !c._p; }).length;
+    S.rotDraft = { fin: ordem, rota: info.codigo, km: kmR };
     S.sheet = { type: 'rot' };
-    openWide(head('Roteiro · ' + rota, ROTAS[rota]) + '<div class="pb">' +
-      '<p class="note" style="margin-top:0">' + fin.length + ' paradas · ~' + kmR + ' km rodoviários estimados (linha reta × 1,25)' + (semCoord.length ? ' · ' + semCoord.length + ' sem localização (no fim da lista)' : '') + '</p>' +
-      '<div class="links">' + mapsTrechos(fin).map(function (u, k) { return '<a target="_blank" rel="noopener" href="' + esc(u) + '">🗺️ Trecho ' + (k + 1) + ' no Google Maps</a>'; }).join('') + '</div>' +
-      '<div class="pc">' + fin.map(function (c, k) { return '<div class="parada"><div class="n">' + (k + 1) + '</div><div><b>' + esc(c.nome) + '</b><small>' + esc(c.endereco || '') + ' · ' + esc(c.cidade || '') + '</small></div>' +
+    openWide(head('Roteiro · ' + info.codigo, info.nome) + '<div class="pb">' +
+      '<p class="note" style="margin-top:0">' + ordem.length + ' paradas · ~' + kmR + ' km rodoviários estimados (linha reta × 1,25), de ' + esc(info.partida || BASE.nome) + ' a ' + esc(info.chegada || info.partida || BASE.nome) +
+      (semLocal ? ' · ' + semLocal + ' sem localização' : '') + '</p>' +
+      '<div class="links">' + mapsTrechos(ordem, info).map(function (u, k) { return '<a target="_blank" rel="noopener" href="' + esc(u) + '">🗺️ Trecho ' + (k + 1) + ' no Google Maps</a>'; }).join('') + '</div>' +
+      '<div class="pc">' + ordem.map(function (c, k) { return '<div class="parada"><div class="n">' + (k + 1) + '</div><div><b>' + esc(c.nome) + '</b><small>' + (c.dia ? 'Dia ' + c.dia + ' · ' : '') + esc(c.endereco || '') + ' · ' + esc(c.cidade || '') + '</small></div>' +
         (waUrl(c.whatsapp || c.telefone, '') ? '<a class="go" target="_blank" rel="noopener" href="' + esc(waUrl(c.whatsapp || c.telefone, '')) + '">' + ICON.chat + '</a>' : '<span></span>') + '</div>'; }).join('') + '</div>' +
-      '<div class="lbl">Dados do roteiro</div><div class="fgrid"><div class="full"><label>Nome</label><input class="fld" id="rt-nome" value="' + esc(rota + ' · ' + br(D.today)) + '"></div>' +
+      '<div class="lbl">Dados do roteiro</div><div class="fgrid"><div class="full"><label>Nome</label><input class="fld" id="rt-nome" value="' + esc(info.codigo + ' · ' + br(D.today)) + '"></div>' +
       '<div><label>Saída</label><input class="fld" type="date" id="rt-ini"></div><div><label>Volta</label><input class="fld" type="date" id="rt-fim"></div>' +
       '<div class="full"><label>Custo previsto (R$)</label><input class="fld" id="rt-custo" inputmode="decimal" value="' + Math.round(kmR * 1.12 + 270) + '"></div></div>' +
       '<div class="note">Custo previsto = km × R$ 1,12 + hotel e diária (R$ 270). Teto por 1º pedido: ' + moneyC(PRIMEIRO_PEDIDO_BASE / MER_MIN_B2B) + ' (1º pedido ÷ ' + String(MER_MIN_B2B).replace('.', ',') + ').</div>' +
@@ -1542,7 +1655,7 @@ async function salvarRoteiro() {
     var livres = {}; pend.filter(function (v) { return !v.roteiro_id; }).forEach(function (v) { livres[v.conta_id] = v; });
     var user = (await sb.auth.getUser()).data.user;
     var r = q(await sb.from('roteiros').insert({ nome: document.getElementById('rt-nome').value || dr.rota, rota: dr.rota, data_inicio: document.getElementById('rt-ini').value || null,
-      data_fim: document.getElementById('rt-fim').value || null, km_previsto: dr.km, custo_previsto: Number(String(document.getElementById('rt-custo').value).replace(/\./g, '').replace(',', '.')) || null,
+      data_fim: document.getElementById('rt-fim').value || null, km_previsto: dr.km, custo_previsto: numBR(document.getElementById('rt-custo').value),
       criado_por: user.email }).select('id').single());
     for (var k = 0; k < dr.fin.length; k++) {
       var c = dr.fin[k], v = livres[c.id];
@@ -1552,6 +1665,57 @@ async function salvarRoteiro() {
     closeSheet(); toast('Roteiro salvo ✓'); if (S.tab === 'visitas') loadVisitas();
   } catch (e) { busy(btn, false, 'Salvar roteiro e marcar visitas'); toast(e.message, true); }
 }
+// incluir cidade no percurso (com coordenada para estimar os km do dia)
+async function incluirCidade() {
+  var cid = document.getElementById('pc-cidade').value.trim(), uf = document.getElementById('pc-uf').value, dia = Number(document.getElementById('pc-dia').value);
+  if (!cid) { toast('Digite a cidade.', true); return; }
+  var vc = S.vcache, bt = document.querySelector('[data-act="paradaCidade"]'); bt.disabled = true;
+  try {
+    var g = await geoCidade(cid, uf), user = (await sb.auth.getUser()).data.user;
+    var ordem = (vc.paradas || []).filter(function (p) { return p.dia === dia; }).reduce(function (m, p) { return Math.max(m, p.ordem); }, 0) + 1;
+    q(await sb.from('rota_paradas').insert({ rota: vc.rota.codigo, dia: dia, ordem: ordem, cidade: cid, uf: uf, lat: g ? g.lat : null, lng: g ? g.lng : null, criado_por: user.email }));
+    toast(cid + ' incluída no dia ' + dia + ' da ' + vc.rota.codigo + ' ✓' + (g ? '' : ' (sem localização no mapa)'));
+    loadVisitas();
+  } catch (e) { bt.disabled = false; toast(/duplicate|unique/i.test(e.message) ? 'Essa cidade já está na rota.' : e.message, true); }
+}
+var BUSCA_T = null;
+function buscarLoja(t) {
+  clearTimeout(BUSCA_T);
+  var el = document.getElementById('pc-res'); if (!el) return;
+  if (t.trim().length < 3) { el.innerHTML = ''; return; }
+  BUSCA_T = setTimeout(function () {
+    sb.from('contas').select('id,nome,cidade,uf').ilike('nome', '%' + t.trim().replace(/[%_,()]/g, ' ') + '%').order('nome').limit(8).then(function (r) {
+      var rows = q(r) || [];
+      el.innerHTML = rows.length ? rows.map(function (c) {
+        return '<div class="vrow"><div><b>' + esc(c.nome) + '</b><br><small>' + esc([c.cidade, c.uf].filter(Boolean).join('/')) + '</small></div><button class="chip" data-pconta="' + esc(c.id) + '">Incluir</button></div>';
+      }).join('') : '<p class="note">Nenhuma loja com esse nome.</p>';
+    }).catch(function (e) { toast(e.message, true); });
+  }, 300);
+}
+async function incluirConta(conta, rota, dia, el) {
+  if (el) el.disabled = true;
+  try {
+    var r = q(await sb.rpc('crm_rota_conta', { p_conta: conta, p_rota: rota, p_dia: dia || null }));
+    atualizarRotaLocal(conta, r.rota);
+    toast(r.msg || 'Feito ✓');
+    if (S.tab === 'visitas') loadVisitas();
+    return r;
+  } catch (e) { if (el) el.disabled = false; toast(e.message, true); }
+}
+async function alterarParada(id, upd) {
+  try {
+    var r = q(await sb.from('rota_paradas').update(upd).eq('id', id).select('id'));
+    if (!r.length) throw new Error('Sem permissão para alterar a rota.');
+    loadVisitas();
+  } catch (e) { toast(e.message, true); loadVisitas(); }
+}
+async function tirarParada(id) {
+  var p = (S.vcache.paradas || []).filter(function (x) { return x.id === id; })[0]; if (!p) return;
+  var nome = p.conta_id ? (p.contas || {}).nome : p.cidade;
+  if (!confirm('Tirar ' + nome + ' da ' + p.rota + '? As lojas dessa cidade saem da rota (ficam “A planejar” se não estiverem em outra).')) return;
+  try { q(await sb.from('rota_paradas').delete().eq('id', id)); toast(nome + ' saiu da ' + p.rota + ' ✓'); loadVisitas(); } catch (e) { toast(e.message, true); }
+}
+
 function marcadorViagem(r) { return 'VIAGEM-' + String(r.data_inicio || D.today).replace(/-/g, '') + '-' + (r.rota || 'SEM-ROTA'); }
 async function prestacaoContas(id) {
   var r = q(await sb.from('roteiros').select(ROT_SEL).eq('id', id).single());
@@ -1668,11 +1832,14 @@ document.addEventListener('click', function (e) {
   var t = e.target;
   if (t.matches && t.matches('.ck')) return; // marcar loja no roteiro não abre a ficha
   var vc = t.closest && t.closest('[data-vconta]');
-  if (vc && !t.closest('a')) { openConta(vc.dataset.vconta); return; }
-  var el = t.closest && t.closest('[data-act],[data-abre],[data-visedit],[data-prest],[data-apagadesp],[data-comp]');
+  if (vc && !t.closest('a, select, option, input, .chip')) { openConta(vc.dataset.vconta); return; }
+  var el = t.closest && t.closest('[data-act],[data-abre],[data-visedit],[data-prest],[data-apagadesp],[data-comp],[data-pok],[data-pdel],[data-pconta]');
   if (!el) return;
   var d = el.dataset;
   if (d.abre) { var p = d.abre.split(':'); closeSheet(); if (p[0] === 'prosp') openX(p[1]); else openLead(p[1]); return; }
+  if (d.pok) { alterarParada(d.pok, { sugerida: false }); return; }
+  if (d.pdel) { tirarParada(d.pdel); return; }
+  if (d.pconta) { incluirConta(d.pconta, S.vcache.rota.codigo, Number((document.getElementById('pc-dia2') || {}).value) || null, el); return; }
   if (d.visedit) { F.visEdit = F.visEdit === d.visedit ? null : d.visedit; visRefresh(); return; }
   if (d.prest) { prestacaoContas(d.prest).catch(function (er) { toast(er.message, true); }); return; }
   if (d.comp) { e.preventDefault(); sb.storage.from('comprovantes').createSignedUrl(d.comp, 600).then(function (r) { if (r.error) toast(r.error.message, true); else window.open(r.data.signedUrl, '_blank'); }); return; }
@@ -1692,6 +1859,7 @@ document.addEventListener('click', function (e) {
     case 'saveNewX': saveNewX(false); break;
     case 'forceNewX': saveNewX(true); break;
     case 'montar': montarRoteiro(); break;
+    case 'paradaCidade': incluirCidade(); break;
     case 'rotSave': salvarRoteiro(); break;
     case 'viagemSave': salvarViagem(); break;
     case 'despSave': salvarDespesa(); break;
@@ -1724,13 +1892,18 @@ document.addEventListener('change', function (e) {
   if (t.id === 'vRota') { S.rota = t.value; loadVisitas(); }
   if (t.id === 'vFiltro') { S.vfiltro = t.value; loadVisitas(); }
   if (t.id === 'vis-rota') {
-    sb.from('contas').update({ rota: t.value || null }).eq('id', F.conta).select('id').then(function (r) {
-      if (r.error || !r.data.length) { toast(r.error ? r.error.message : 'Só o gestor, vendas ou o SDR da loja mudam a rota.', true); return; }
-      if (F.vis && F.vis.conta) F.vis.conta.rota = t.value;
-      toast(t.value ? 'Loja incluída na ' + t.value + ' ✓' : 'Loja tirada das rotas ✓');
+    var conta = F.conta;
+    sb.rpc('crm_rota_conta', { p_conta: conta, p_rota: t.value || null }).then(function (r) {
+      if (r.error) { toast(traduzErro(r.error.message), true); if (F && F.conta === conta) loadVis(true); return; }
+      atualizarRotaLocal(conta, r.data.rota);
+      toast(r.data.msg || (t.value === 'A planejar' ? 'Loja marcada “A planejar” ✓' : t.value ? 'Loja incluída na ' + t.value + ' ✓' : 'Loja tirada das rotas ✓'));
+      if (F && F.conta === conta) loadVis(true);
     });
   }
+  if (t.dataset && t.dataset.pdia) alterarParada(t.dataset.pdia, { dia: Number(t.value) });
+  if (t.dataset && t.dataset.incluir && t.value) incluirConta(t.dataset.incluir, t.value, null, t);
   if (t.dataset && t.dataset.papel) sb.from('perfis').update({ papel: t.value }).eq('email', t.dataset.papel).then(function (r) { toast(r.error ? r.error.message : 'Papel atualizado ✓', !!r.error); });
   if (t.dataset && t.dataset.ativo) sb.from('perfis').update({ ativo: t.checked }).eq('email', t.dataset.ativo).then(function (r) { toast(r.error ? r.error.message : (t.checked ? 'Acesso ativado ✓' : 'Acesso desativado ✓'), !!r.error); });
 });
 document.addEventListener('toggle', function (e) { if (e.target.id === 'd-vis' && e.target.open) loadVis(); }, true);
+document.addEventListener('input', function (e) { if (e.target.id === 'pc-busca') buscarLoja(e.target.value); });
