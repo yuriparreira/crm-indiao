@@ -319,7 +319,7 @@ function viewPainel() {
     var pl = sdrs.map(function (s) {
       var m = X.filter(function (x) { return x.resp === s; });
       var c = function (st) { return m.filter(function (x) { return x.status === st; }).length; };
-      var ab = m.length - c(PSK.ABORDAR) - c(PSK.FORA) - c(PSK.JA_LEAD);
+      var ab = m.length - c(PSK.ABORDAR) - c(PSK.FORA) - c(PSK.JA_LEAD) - c(PSK.JA_CLIENTE);
       var resp = c(PSK.RESPONDEU) + c(PSK.QUALIFICADO) + c(PSK.CLIENTE), qual = c(PSK.QUALIFICADO) + c(PSK.CLIENTE);
       return {
         s: s, hoje: m.filter(function (x) { return x.ultToque === hoje; }).length,
@@ -379,9 +379,10 @@ function viewPainel() {
 }
 
 /* ---------- filtros ---------- */
-function mine(resp) { return S.vend === 'Todos' || !resp || resp === S.vend; }
+function mesmoNome(a, b) { return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase(); }
+function mine(resp) { return S.vend === 'Todos' || !String(resp || '').trim() || mesmoNome(resp, S.vend); }
 function leads() { return D.leads.filter(function (l) { return mine(l.resp); }); }
-function pvs() { return D.pv.filter(function (p) { return S.vend === 'Todos' || p.vend === S.vend; }); }
+function pvs() { return D.pv.filter(function (p) { return S.vend === 'Todos' || mesmoNome(p.vend, S.vend); }); }
 function xs() { return D.prosp ? D.prosp.rows.filter(function (x) { return mine(x.resp); }) : []; }
 function hasProsp() { return !!(D.prosp && (D.admin || D.prosp.rows.length)); }
 function match(o, fields) {
@@ -669,8 +670,10 @@ function paint(h) {
   var pb = document.querySelector('.pb'), top = pb ? pb.scrollTop : 0;
   if (document.querySelector('#panel .ph') && S.sheet && S.sheet.rendered === F.id) {
     var open = [].map.call(document.querySelectorAll('#panel details'), function (d) { return d.open; });
+    var guarda = {}; [].forEach.call(document.querySelectorAll('#visBox [id^="vn-"], #visBox [id^="ve-"]'), function (el) { guarda[el.id] = el.value; });
     document.getElementById('panel').innerHTML = h;
     [].forEach.call(document.querySelectorAll('#panel details'), function (d, i) { if (open[i]) d.open = true; });
+    Object.keys(guarda).forEach(function (k) { var el = document.getElementById(k); if (el) el.value = guarda[k]; });
     document.querySelector('.pb').scrollTop = top;
   } else { openSheet(h); S.sheet.rendered = F.id; }
 }
@@ -799,7 +802,20 @@ function readLeadInputs() {
   document.querySelectorAll('[data-dado]').forEach(function (el) { F.dados[el.getAttribute('data-dado')] = el.value; });
 }
 function busy(btn, on, txt) { btn.disabled = on; btn.textContent = on ? 'Salvando…' : txt; }
+// pedido de visita preenchido e não registrado: o Salvar da ficha avisa em vez de perder
+function visitaPendente() {
+  var d = document.getElementById('vn-data'), h = document.getElementById('vn-hora'), o = document.getElementById('vn-obs');
+  return !!((d && d.value) || (h && h.value.trim()) || (o && o.value.trim()));
+}
+function avisaVisita() {
+  if (!visitaPendente()) return false;
+  toast('Você preencheu um pedido de visita. Toque em “+ Registrar pedido de visita” ou apague os campos antes de salvar.', true);
+  var dv = document.getElementById('d-vis'); if (dv) dv.open = true;
+  var b = document.querySelector('[data-act="visNew"]'); if (b) b.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  return true;
+}
 function saveLead() {
+  if (avisaVisita()) return;
   readLeadInputs();
   var l = getLead(F.id), ch = {};
   var tipo = (ST[F.status] || {}).t;
@@ -819,7 +835,7 @@ function saveLead() {
   call('crmUpdateLead', F.id, ch).then(function (res) {
     var saiu = replaceLead(res.lead);
     if (res.pv) upsertPV(res.pv);
-    syncProspFromLead(res.lead);
+    syncProspFromLead(res.lead, !!ch.status);
     closeSheet(); render();
     toast(res.pv && ch.status ? '🎉 Pedido fechado! O cliente foi para o pós-venda.' : saiu ? 'Salvo ✓ O lead passou para ' + res.lead.resp + '.' : 'Salvo ✓');
   }).catch(function (e) { busy(btn, false, 'Salvar'); toast(e.message || 'Não consegui salvar', true); });
@@ -827,19 +843,22 @@ function saveLead() {
 /* devolve true se o lead saiu da carteira de quem está usando (ex.: passou para o closer) */
 function replaceLead(nl) {
   if (!nl) return false;
-  var fora = !D.admin && nl.resp && nl.resp !== D.me;
+  var fora = !D.admin && nl.resp && !mesmoNome(nl.resp, D.me);
   for (var i = 0; i < D.leads.length; i++) if (D.leads[i].id === nl.id) { if (fora) D.leads.splice(i, 1); else D.leads[i] = nl; return fora; }
   if (!fora) D.leads.push(nl);
   return fora;
 }
 function upsertPV(p) { for (var i = 0; i < D.pv.length; i++) if (D.pv[i].id === p.id) { if (!p.insta) p.insta = D.pv[i].insta; D.pv[i] = p; return; } D.pv.push(p); }
 function upsertX(x) { if (!D.prosp) return; for (var i = 0; i < D.prosp.rows.length; i++) if (D.prosp.rows[i].id === x.id) { D.prosp.rows[i] = x; return; } D.prosp.rows.push(x); }
-function syncProspFromLead(l) {
-  if (!D.prosp || !l) return;
+function syncProspFromLead(l, mudou) {
+  if (!D.prosp || !l || !mudou) return;
   D.prosp.rows.forEach(function (x) {
     if (x.lead !== l.id) return;
-    if (l.tipo === 'Ganho') { x.status = PSK.CLIENTE || x.status; x.proxPasso = 'Cliente'; }
-    else if (['Qualificado', 'Catálogo enviado', 'Negociação'].indexOf(l.status) >= 0 && PSK.QUALIFICADO) { x.status = PSK.QUALIFICADO; x.proxPasso = 'Com o ' + D.prosp.closer; x.prox = ''; }
+    var doSdr = x.status === PSK.RESPONDEU || x.status === PSK.QUALIFICADO;
+    var fila = [PSK.ABORDAR, PSK.CADENCIA, PSK.SEM_RETORNO, PSK.JA_LEAD].indexOf(x.status) >= 0;
+    if (l.tipo === 'Ganho') { if (doSdr || fila) { x.status = doSdr ? PSK.CLIENTE : PSK.JA_CLIENTE; x.proxPasso = 'Cliente'; x.prox = ''; } }
+    else if (x.status === PSK.RESPONDEU && ['Qualificado', 'Catálogo enviado', 'Negociação'].indexOf(l.status) >= 0 && mesmoNome(l.resp, D.prosp.closer)
+             && String(x.decisor || '').trim() && String(x.cnpj || '').trim()) { x.status = PSK.QUALIFICADO; x.proxPasso = 'Com o ' + D.prosp.closer; x.prox = ''; }
   });
 }
 
@@ -855,7 +874,8 @@ function renderX() {
   var a = xAlert(x), closer = D.prosp.closer || 'closer';
   var resp = x.status === PSK.RESPONDEU || F.res === 'resp';
   var jaCli = !!PSK.JA_CLIENTE && x.status === PSK.JA_CLIENTE;
-  var fech = x.status === PSK.QUALIFICADO || x.status === PSK.CLIENTE || jaCli;
+  var jaLead = !!PSK.JA_LEAD && x.status === PSK.JA_LEAD;
+  var fech = x.status === PSK.QUALIFICADO || x.status === PSK.CLIENTE || jaCli || jaLead;
   var sub = [[x.cidade, x.uf].filter(Boolean).join('/'), x.tier ? 'Tier ' + x.tier : '', x.score !== '' ? 'score ' + x.score : ''].filter(Boolean).join(' · ');
   var wa = waUrl(x.whats, resp ? '' : roteiro(x, etapaRot));
   var d = digits(x.whats);
@@ -892,10 +912,10 @@ function renderX() {
       '<div class="grid2"><div class="f"><label>Público</label><input class="fld" data-q="publico" value="' + esc(q('publico')) + '"></div>' +
       '<div class="f"><label>Época de compra</label><input class="fld" data-q="epoca" value="' + esc(q('epoca')) + '"></div></div>' +
       '<button class="btn dark" style="width:100%;margin-top:4px" data-act="passar">Passar para o ' + esc(closer) + ' →</button>' +
-      '<div class="note">Com decisor e CNPJ, o lead vai para o ' + esc(closer) + ' com tudo anotado e ele recebe aviso.</div></div>';
+      '<div class="note">Com decisor e CNPJ, o lead vai para o ' + esc(closer) + ' com tudo anotado. Avise o ' + esc(closer) + ' pelo WhatsApp: o aviso automático ainda não está ligado.</div></div>';
   }
   if (fech) {
-    h += '<div class="warn" style="background:var(--wa-soft);color:var(--wa)">' + (jaCli ? '⭐ Já era cliente da Indião. Fora da cadência de prospecção.' : x.status === PSK.CLIENTE ? 'Virou cliente 🎉' : 'Já está com o ' + esc(closer) + ' para fechar.') + (x.lead ? ' Lead ' + esc(x.lead) + '.' : '') + '</div>' +
+    h += '<div class="warn" style="background:var(--wa-soft);color:var(--wa)">' + (jaCli ? '⭐ Já era cliente da Indião. Fora da cadência de prospecção.' : jaLead ? 'A loja já é lead (' + esc(x.proxPasso || 'com outro vendedor') + '). Fora da cadência de prospecção.' : x.status === PSK.CLIENTE ? 'Virou cliente 🎉' : 'Já está com o ' + esc(closer) + ' para fechar.') + (x.lead ? ' Lead ' + esc(x.lead) + '.' : '') + '</div>' +
       (jaCli ? '<div class="note">Marcou por engano? ' + (D.admin ? 'Corrija o status em "Dados da loja", logo abaixo.' : 'Avise o gestor para corrigir.') + '</div>' : '');
   }
   if (!fech && F.res !== 'semint' && F.res !== 'fora' && F.res !== 'cliente') {
@@ -928,6 +948,7 @@ function readX() {
   document.querySelectorAll('[data-q]').forEach(function (el) { F.q[el.getAttribute('data-q')] = el.value; });
 }
 function saveX(passar) {
+  if (avisaVisita()) return;
   readX();
   var x = getX(F.id), ch = {};
   Object.keys(F.q).forEach(function (k) { if (String(F.q[k]) !== String(x[k] || '')) ch[k] = F.q[k]; });
@@ -1003,6 +1024,7 @@ function renderPV() {
 }
 function readPV() { F.nota = document.getElementById('f-nota').value; F.tipoFU = document.getElementById('f-tipo').value; }
 function savePV() {
+  if (avisaVisita()) return;
   var p = getPV(F.id), ch = {};
   readPV();
   if (F.status !== p.status) ch.status = F.status;
@@ -1100,7 +1122,11 @@ function refresh(silent) {
   var b = document.getElementById('refresh'); b.classList.add('spin');
   return call('crmReload').then(function (nd) {
     D = nd; indexLists(); b.classList.remove('spin');
-    if (!S.sheet) render(); else nav();
+    if (!S.sheet && !(silent && S.tab === 'visitas')) render(); else nav();
+    if (!S.sheet && silent && S.tab === 'visitas') {
+      var raiz = document.getElementById('visRoot'), foco = document.activeElement;
+      if (raiz && !(foco && raiz.contains(foco) && /INPUT|SELECT|TEXTAREA/.test(foco.tagName)) && !raiz.querySelector('details[open]')) loadVisitas();
+    }
     if (!silent) toast('Atualizado ✓');
   }).catch(function (e) { b.classList.remove('spin'); if (!silent) toast(e.message, true); });
 }
@@ -1199,7 +1225,7 @@ document.addEventListener('drop', function (e) {
   var t = (ST[st] || {}).t;
   if (st === PERDIDO || t === 'Ganho') { openLead(id, st); return; }
   var old = l.status; l.status = st; l.tipo = t || 'Aberto'; render();
-  call('crmUpdateLead', id, { status: st }).then(function (res) { var saiu = replaceLead(res.lead); syncProspFromLead(res.lead); render(); toast(l.nome + ' → ' + st + (saiu ? ' (passou para ' + res.lead.resp + ')' : '')); })
+  call('crmUpdateLead', id, { status: st }).then(function (res) { var saiu = replaceLead(res.lead); syncProspFromLead(res.lead, true); render(); toast(l.nome + ' → ' + st + (saiu ? ' (passou para ' + res.lead.resp + ')' : '')); })
     .catch(function (err) { l.status = old; render(); toast(err.message, true); });
 });
 
@@ -1250,7 +1276,8 @@ function telaLogin(msg) {
   document.getElementById('bnav').classList.add('hidden');
   var v = document.getElementById('view'); v.className = '';
   v.innerHTML = '<div class="login-wrap"><div class="lg-box">' + penaSvg() + logoSvg() +
-    '<h1>CRM Atacado</h1><p>Digite o seu e-mail de acesso. Você recebe um link para entrar: abra o e-mail neste mesmo aparelho.</p>' +
+    '<h1>CRM Atacado</h1><p>Digite o seu e-mail de acesso. Você recebe um link para entrar: toque nele no mesmo navegador em que você usa o CRM.</p>' +
+    (window.navigator.standalone ? '<p><b>iPhone:</b> este ícone antigo não recebe o login do e-mail. Apague o ícone e, no Safari, abra crm.indiaostore.com.br › Compartilhar › Adicionar à Tela de Início. O novo ícone abre no Safari e o link do e-mail funciona.</p>' : '') +
     '<form id="fLogin" autocomplete="on"><label for="lgEmail">E-mail</label><input class="fld" id="lgEmail" type="email" autocomplete="email" required placeholder="nome@exemplo.com">' +
     '<button class="btn primary" id="lgBtn">Receber link de acesso</button></form><div class="lg-msg" id="lgMsg">' + esc(msg || '') + '</div></div></div>';
   document.getElementById('fLogin').addEventListener('submit', function (e) {
@@ -1270,6 +1297,12 @@ function semAcesso(msg) {
     '<button class="btn primary" id="sair2">Sair e entrar com outro e-mail</button></div></div>';
   document.getElementById('sair2').onclick = sair;
 }
+function falhaCarga(msg) {
+  var v = document.getElementById('view');
+  v.innerHTML = '<div class="login-wrap"><div class="lg-box">' + penaSvg() + logoSvg() + '<h1>Não consegui carregar o CRM</h1><p>' + esc(msg) + '</p>' +
+    '<button class="btn primary" id="tentar">Tentar de novo</button><button class="btn" id="sair2">Sair</button></div></div>';
+  document.getElementById('tentar').onclick = iniciar; document.getElementById('sair2').onclick = sair;
+}
 function sair() { sb.auth.signOut().then(function () { location.hash = ''; location.reload(); }); }
 document.getElementById('sair').addEventListener('click', sair);
 
@@ -1285,7 +1318,10 @@ function iniciar() {
     if (['hoje', 'funil', 'prosp', 'clientes', 'painel', 'visitas'].indexOf(h) >= 0) S.tab = h;
     else if (hasProsp() && D.prosp.sdrs.indexOf(D.me) >= 0 && !leads().filter(function (l) { return l.tipo === 'Aberto'; }).length) S.tab = 'prosp';
     render();
-  }).catch(function (e) { semAcesso(e.message || 'Peça ao gestor para liberar o seu e-mail.'); });
+  }).catch(function (e) {
+    var m = (e && e.message) || '';
+    if (/Acesso não liberado/i.test(m)) semAcesso(m); else falhaCarga(m || 'Não foi possível carregar o CRM.');
+  });
 }
 (function () {
   var hp = new URLSearchParams(location.hash.slice(1)), erro = '';
@@ -1326,10 +1362,11 @@ function saveNewX(force) {
   call('crmAddProsp', f).then(function (res) {
     busy(btn, false, 'Salvar loja');
     if (res.duplicate) {
-      var abre = res.visivel && (res.tipo === 'prosp' ? getX(res.id) : getLead(res.id));
+      var abre = res.visivel && (res.tipo === 'prosp' ? getX(res.id) : res.tipo === 'cliente' ? getPV(res.id) : getLead(res.id));
       document.getElementById('dupBox').innerHTML = '<div class="warn">Essa loja já está no CRM: <b>' + esc(res.id) + ' · ' + esc(res.loja) + '</b> (' + esc(res.status) + (res.resp ? ', com ' + esc(res.resp) : '') + ').' +
         '<div class="chips" style="margin-top:8px">' + (abre ? '<button class="chip" data-abre="' + esc(res.tipo) + ':' + esc(res.id) + '">Abrir a ficha</button>' : '') +
-        '<button class="chip" data-act="forceNewX">Salvar mesmo assim</button></div></div>';
+        (res.tipo === 'cliente' && !D.admin ? '' : '<button class="chip" type="button" data-act="forceNewX">Salvar mesmo assim</button>') + '</div>' +
+        (res.tipo === 'cliente' ? '<div class="note">É cliente da carteira de ' + esc(res.resp || '—') + '. ' + (D.admin ? 'Se salvar, entra como "0. Já é cliente", fora da cadência.' : 'Fale com quem cuida da loja em vez de prospectar.') + '</div>' : '') + '</div>';
       document.getElementById('dupBox').scrollIntoView({ behavior: 'smooth' });
       return;
     }
@@ -1357,7 +1394,8 @@ function visHtml() {
   if (!F || !F.conta) return '';
   if (!F.vis) return '<p class="note">Toque para carregar…</p>';
   var c = F.vis.conta || {}, rows = F.vis.rows || [], rr = F.vis.rotas || [];
-  var h = '<div class="f"><label>Rota de visita</label><select class="fld" id="vis-rota">' + rotaOpts(c.rota || '', '— fora das rotas —') + '</select></div>' +
+  var h = (podeRoteiro() ? '<div class="f"><label>Rota de visita</label><select class="fld" id="vis-rota">' + rotaOpts(c.rota || '', '— fora das rotas —') + '</select></div>'
+                         : '<div class="f"><label>Rota de visita</label><div class="tag">' + esc(c.rota || 'fora das rotas') + '</div></div>') +
     (rr.length ? '<div class="note">Entra em: ' + rr.map(function (x) {
       return '<b>' + esc(x.rota) + '</b> dia ' + x.dia + (x.via === 'avulsa' ? ' (incluída avulsa)' : '') + (x.sugerida ? ' (cidade sugerida, falta confirmar)' : '');
     }).join(' · ') + '</div>' : (c.rota === 'A planejar' ? '<div class="note">Etiqueta <b>A planejar</b>: ainda não entra em nenhuma rota.' + (c.rota_anterior ? ' Rota antiga: ' + esc(c.rota_anterior) + '.' : '') + '</div>' : '')) +
@@ -1373,7 +1411,7 @@ function visHtml() {
         '<div><label>Resultado</label><select class="fld" id="ve-res">' + optList(RES_VISITA, v.resultado || '', '—') + '</select></div>' +
         '<div><label>Data</label><input class="fld" type="date" id="ve-data" value="' + esc(v.data_visita || '') + '"></div>' +
         '<div><label>Hora</label><input class="fld" id="ve-hora" value="' + esc(v.hora || '') + '" placeholder="10:30"></div>' +
-        '<div class="full"><label>Valor do pedido (R$)</label><input class="fld" id="ve-valor" inputmode="decimal" value="' + esc(v.valor_pedido == null ? '' : v.valor_pedido) + '"></div>' +
+        '<div class="full"><label>Valor do pedido (R$)</label><input class="fld" id="ve-valor" inputmode="decimal" value="' + esc(numTxt(v.valor_pedido)) + '"></div>' +
         '<div class="full"><label>Observações</label><input class="fld" id="ve-obs" value="' + esc(v.observacoes || '') + '"></div></div>' +
         '<button class="btn dark" style="width:100%;margin-top:8px" data-act="visEditSave" data-id="' + esc(v.id) + '">Salvar visita</button></div>' : '');
   }).join('') : '<p class="note">Nenhuma visita ainda.</p>');
@@ -1439,10 +1477,11 @@ function viewVisitas() {
 function kmDias(rota, paradas) {
   var base = rota.partida_lat ? { lat: rota.partida_lat, lng: rota.partida_lng } : BASE;
   var fim = rota.chegada_lat ? { lat: rota.chegada_lat, lng: rota.chegada_lng } : base;
-  var idaVolta = (rota.partida || '') === (rota.chegada || '');
+  var idaVolta = mesmaBase(rota);
   var dias = {}, ult = 0;
   paradas.filter(function (p) { return !p.sugerida && p.lat; }).forEach(function (p) { (dias[p.dia] = dias[p.dia] || []).push(p); ult = Math.max(ult, p.dia); });
   var out = {}, atual = base;
+  out.semLocal = {}; paradas.forEach(function (p) { if (!p.sugerida && !p.lat) out.semLocal[p.dia] = (out.semLocal[p.dia] || 0) + 1; });
   Object.keys(dias).map(Number).sort(function (a, b) { return a - b; }).forEach(function (d) {
     var km = 0; if (idaVolta) atual = base;
     dias[d].sort(function (a, b) { return a.ordem - b.ordem; }).forEach(function (p) { km += distKm(atual, p); atual = p; });
@@ -1450,6 +1489,10 @@ function kmDias(rota, paradas) {
     out[d] = Math.round(km * 1.25);
   });
   return out;
+}
+function mesmaBase(r) {
+  if (r.partida_lat && r.chegada_lat) return distKm({ lat: r.partida_lat, lng: r.partida_lng }, { lat: r.chegada_lat, lng: r.chegada_lng }) < 5;
+  return (r.partida || '') === (r.chegada || '');
 }
 function cidadesNoDia(paradas, dia) {
   var k = {};
@@ -1475,7 +1518,7 @@ async function loadVisitas() {
       rota === 'A planejar' ? Promise.resolve({ data: [] }) : sb.from('rota_paradas').select('*, contas(nome,cidade,uf)').eq('rota', rota).order('dia').order('ordem'),
       sb.from('visitas').select('*').in('situacao', ['a agendar', 'agendada', 'reagendar'])
     ]);
-    var root = document.getElementById('visRoot'); if (!root || S.tab !== 'visitas') return;
+    var root = document.getElementById('visRoot'); if (!root || S.tab !== 'visitas' || S.rota !== rota) return;
     var lojas = q(r[0]) || [], paradas = q(r[1]) || [], vis = q(r[2]) || [];
     var mv = {}; vis.forEach(function (v) { if (!mv[v.conta_id] || !v.roteiro_id) mv[v.conta_id] = v; });
     var lista = lojas.filter(function (c) { return statusLoja(c) !== 'fora'; });
@@ -1489,9 +1532,10 @@ async function loadVisitas() {
       '<div><label>Mostrar</label><select class="fld" id="vFiltro">' +
       [['ativas', 'Lojas em prospecção, leads e clientes'], ['todas', 'Todas, inclusive histórico do RD'], ['agendadas', 'Só com visita pedida ou agendada'], ['quentes', 'Clientes, qualificados e leads abertos']]
         .map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === filtro ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select></div>' +
-      (pode && rota !== 'A planejar' ? '<div><button class="btn primary" data-act="montar" id="btnMontar">Montar roteiro com as marcadas</button></div>' : '') + '</div>';
+      (pode && rota !== 'A planejar' ? '<div><button class="btn primary" data-act="montar" id="btnMontar">Montar roteiro com as marcadas</button></div>' : '') + '</div>' +
+      (pode ? '<div class="links" style="margin:-4px 0 12px"><button data-act="rotaNova">＋ Nova rota</button></div>' : '');
     if (rota !== 'A planejar') h += percursoHtml(info, paradas, lojas, pode);
-    else h += '<p class="hint" style="color:var(--muted);font-size:13px;margin:-4px 0 12px">Lojas que tinham rota antiga e ficaram fora das rotas novas. ' + (pode ? 'Use “Incluir em” para colocar a loja no percurso de uma rota, ou inclua a cidade dela numa rota.' : 'O gestor e o Pedro incluem essas lojas nas rotas.') + '</p>';
+    else h += '<p class="hint" style="color:var(--muted);font-size:13px;margin:-4px 0 12px">Lojas ativas fora das rotas: em SP, nas cidades vizinhas de outros estados ou marcadas na ficha. ' + (pode ? 'Use “Incluir em” para colocar a loja no percurso de uma rota, ou inclua a cidade dela numa rota.' : 'O gestor e o Pedro incluem essas lojas nas rotas.') + '</p>';
     h += lojasHtml(rota, lista, mv, pode);
     h += '<div id="vRots"></div>';
     root.innerHTML = h;
@@ -1505,10 +1549,16 @@ function percursoHtml(info, paradas, lojas, pode) {
   var dias = []; for (var d = 1; d <= maxDia; d++) if (paradas.some(function (p) { return p.dia === d; })) dias.push(d);
   var diaOpts = function (sel) { var o = ''; for (var i = 1; i <= maxDia + 1; i++) o += '<option value="' + i + '"' + (i === sel ? ' selected' : '') + '>Dia ' + i + (i > maxDia ? ' (novo)' : '') + '</option>'; return o; };
   var h = '<div class="rot"><h3>' + esc(info.codigo + ' · ' + info.nome) + '</h3><p class="quando">Saída: ' + esc(info.partida || '—') + ' · chegada: ' + esc(info.chegada || '—') +
-    (info.observacao ? '<br>' + esc(info.observacao) : '') + '</p>';
+    (info.observacao ? '<br>' + esc(info.observacao) : '') + '</p>' +
+    (pode ? '<details style="margin:0 0 8px"><summary>✏️ Editar nome, saída, chegada e observação</summary><div class="fgrid">' +
+      '<div class="full"><label>Nome</label><input class="fld" id="re-nome" value="' + esc(info.nome) + '"></div>' +
+      '<div><label>Saída</label><input class="fld" id="re-ini" value="' + esc(info.partida || '') + '" placeholder="Cidade, UF"></div>' +
+      '<div><label>Chegada</label><input class="fld" id="re-fim" value="' + esc(info.chegada || '') + '" placeholder="Cidade, UF"></div>' +
+      '<div class="full"><label>Observação</label><textarea class="fld" id="re-obs">' + esc(info.observacao || '') + '</textarea></div></div>' +
+      '<button class="btn dark" style="width:100%;margin-top:8px" data-act="rotaEditar">Salvar a rota</button></details>' : '');
   dias.forEach(function (d) {
     var ps = paradas.filter(function (p) { return p.dia === d; }), n = cidadesNoDia(paradas, d);
-    h += '<div class="lbl">Dia ' + d + ' <small>' + n + ' de 3 cidades' + (km[d] ? ' · ~' + km[d] + ' km' : '') + '</small></div>';
+    h += '<div class="lbl">Dia ' + d + ' <small>' + n + ' de 3 cidades' + (km[d] ? ' · ~' + km[d] + ' km' + (km.semLocal[d] ? ' (parcial: ' + km.semLocal[d] + ' sem localização)' : '') : (km.semLocal[d] ? ' · km sem localização' : '')) + '</small></div>';
     h += ps.map(function (p) {
       var nome = p.conta_id ? '🏬 ' + ((p.contas || {}).nome || 'Loja') + ' · ' + ((p.contas || {}).cidade || '') : (p.cidade + (p.uf && p.uf !== 'SP' ? '/' + p.uf : ''));
       var nl = p.conta_id ? '' : (porCidade[chaveCidade(p.cidade)] || 0);
@@ -1534,6 +1584,7 @@ function percursoHtml(info, paradas, lojas, pode) {
   }
   return h + '</div>';
 }
+function marcada(id, v) { var m = S.vmarc || {}; return id in m ? m[id] : !!(v && !v.roteiro_id); }
 function lojasHtml(rota, lista, mv, pode) {
   if (!lista.length) return '<div class="empty">' + penaSvg() + '<p>Nenhuma loja com esse filtro.' + (rota !== 'A planejar' ? ' Inclua cidades ou lojas no percurso acima.' : '') + '</p></div>';
   var grupos = [], idx = {};
@@ -1547,7 +1598,7 @@ function lojasHtml(rota, lista, mv, pode) {
       var v = mv[c.id], st = c.lead && c.lead.tipo === 'Aberto' ? pill(c.lead.status) : c.prosp ? pill(c.prosp.status, XST) : c.cliente ? pill('Ativo', PST) : '';
       var quem = [c.prosp && c.prosp.sdr ? 'SDR ' + c.prosp.sdr : '', c.lead && c.lead.resp && c.lead.tipo === 'Aberto' ? 'lead com ' + c.lead.resp : '', c.cliente ? 'cliente' : ''].filter(Boolean).join(' · ');
       return '<article class="card' + (v && !v.roteiro_id ? ' c-orange' : '') + '" data-vconta="' + esc(c.id) + '">' +
-        (pode && rota !== 'A planejar' ? '<input type="checkbox" class="ck v-marca" value="' + esc(c.id) + '"' + (v && !v.roteiro_id ? ' checked' : '') + ' aria-label="Incluir no roteiro">' : '') +
+        (pode && rota !== 'A planejar' ? '<input type="checkbox" class="ck v-marca" value="' + esc(c.id) + '"' + (marcada(c.id, v) ? ' checked' : '') + ' aria-label="Incluir no roteiro">' : '') +
         '<div class="cm"><div class="ct"><b>' + esc(c.nome) + '</b>' + st + '</div>' +
         '<div class="cs">' + esc([c.cidade, c.uf].filter(Boolean).join('/')) + (c.endereco ? ' · ' + esc(c.endereco) : ' · sem endereço') + '</div>' +
         '<div class="cn ' + (v ? 't-orange' : 't-muted') + '">' + (v ? 'Visita ' + esc(v.situacao) + (v.data_visita ? ' · ' + br(v.data_visita) : '') + (v.hora ? ' ' + esc(v.hora) : '') + (v.roteiro_id ? ' · em roteiro' : '') : esc(quem || (c.prosp ? 'prospecção sem SDR' : c.lead ? 'lead ' + c.lead.status : 'histórico do RD'))) +
@@ -1614,11 +1665,15 @@ async function montarRoteiro() {
     var contas = vc.lista.filter(function (c) { return ids.indexOf(c.id) >= 0; }).map(function (c) { return Object.assign({}, c); });
     var falta = contas.filter(function (c) { return !c.lat && c.endereco; }).length, i = 0;
     for (var c of contas) { if (!c.lat && c.endereco) { bt.textContent = 'Localizando ' + (++i) + ' de ' + falta + '…'; await geocodificar(c); } }
+    for (var c2 of contas) {
+      var k2 = chaveCidade(c2.cidade);
+      if (!c2.lat && k2 && !coordCidade[k2]) { bt.textContent = 'Localizando ' + c2.cidade + '…'; await esperar(1100); var gc = await geoCidade(c2.cidade, c2.uf); if (gc) coordCidade[k2] = gc; }
+    }
     contas.forEach(function (c) { var cc = coordCidade[chaveCidade(c.cidade)]; c._p = c.lat ? { lat: c.lat, lng: c.lng } : cc || null; });
     var base = info.partida_lat ? { lat: info.partida_lat, lng: info.partida_lng } : BASE;
     var fim = info.chegada_lat ? { lat: info.chegada_lat, lng: info.chegada_lng } : base;
-    var idaVolta = (info.partida || '') === (info.chegada || '');
-    var grupos = {}; contas.forEach(function (c) { var g = (c.sugerida ? 99 : (c.dia || 98)) * 1000 + (c.pordem || 0); (grupos[g] = grupos[g] || []).push(c); });
+    var idaVolta = mesmaBase(info);
+    var grupos = {}; contas.forEach(function (c) { var g = (c.dia || 98) * 1000 + (c.pordem || 0); (grupos[g] = grupos[g] || []).push(c); });
     var ordem = [], atual = base, km = 0, diaAnt = null;
     Object.keys(grupos).map(Number).sort(function (a, b) { return a - b; }).forEach(function (g) {
       var dia = Math.floor(g / 1000);
@@ -1649,21 +1704,58 @@ async function salvarRoteiro() {
   var dr = S.rotDraft; if (!dr) return;
   var btn = document.getElementById('btnSave'); if (btn.disabled) return; busy(btn, true);
   try {
-    var ids = dr.fin.map(function (c) { return c.id; });
-    // visitas pendentes lidas agora, para não duplicar nem tirar paradas de outro roteiro
-    var pend = q(await sb.from('visitas').select('id,conta_id,roteiro_id').in('conta_id', ids).in('situacao', ['a agendar', 'agendada', 'reagendar']));
-    var livres = {}; pend.filter(function (v) { return !v.roteiro_id; }).forEach(function (v) { livres[v.conta_id] = v; });
-    var user = (await sb.auth.getUser()).data.user;
-    var r = q(await sb.from('roteiros').insert({ nome: document.getElementById('rt-nome').value || dr.rota, rota: dr.rota, data_inicio: document.getElementById('rt-ini').value || null,
-      data_fim: document.getElementById('rt-fim').value || null, km_previsto: dr.km, custo_previsto: numBR(document.getElementById('rt-custo').value),
-      criado_por: user.email }).select('id').single());
-    for (var k = 0; k < dr.fin.length; k++) {
-      var c = dr.fin[k], v = livres[c.id];
-      if (v) q(await sb.from('visitas').update({ roteiro_id: r.id, ordem: k + 1 }).eq('id', v.id).select('id'));
-      else q(await sb.from('visitas').insert({ conta_id: c.id, roteiro_id: r.id, ordem: k + 1, situacao: 'a agendar', agendado_por: D.me, criado_por: user.email }));
-    }
-    closeSheet(); toast('Roteiro salvo ✓'); if (S.tab === 'visitas') loadVisitas();
+    if (!dr.id) dr.id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (ch) { var r = crypto.getRandomValues(new Uint8Array(1))[0] & 15; return (ch === 'x' ? r : (r & 3 | 8)).toString(16); });
+    q(await sb.rpc('crm_salvar_roteiro', { p_id: dr.id, p_rota: dr.rota, p_nome: document.getElementById('rt-nome').value || dr.rota,
+      p_ini: document.getElementById('rt-ini').value || null, p_fim: document.getElementById('rt-fim').value || null,
+      p_km: dr.km, p_custo: numBR(document.getElementById('rt-custo').value), p_contas: dr.fin.map(function (c) { return c.id; }) }));
+    S.vmarc = {}; closeSheet(); toast('Roteiro salvo ✓'); if (S.tab === 'visitas') loadVisitas();
   } catch (e) { busy(btn, false, 'Salvar roteiro e marcar visitas'); toast(e.message, true); }
+}
+// editar e criar rotas (gestor e vendas)
+async function ponto(txt) {
+  var t = String(txt || '').trim(); if (!t) return { nome: null, lat: null, lng: null };
+  var js = null;
+  try { var res = await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=' + encodeURIComponent(t + ', Brasil')); js = res.ok ? await res.json() : null; } catch (e) { js = null; }
+  return { nome: t, lat: js && js.length ? +js[0].lat : null, lng: js && js.length ? +js[0].lon : null };
+}
+async function salvarRota() {
+  var info = S.vcache.rota, g = function (id) { return document.getElementById(id).value.trim(); }, bt = document.querySelector('[data-act="rotaEditar"]');
+  var upd = { nome: g('re-nome') || info.nome, observacao: g('re-obs') || null };
+  bt.disabled = true;
+  try {
+    if (g('re-ini') !== (info.partida || '')) { var a = await ponto(g('re-ini')); if (a.nome && a.lat == null) throw new Error('Não achei a saída "' + a.nome + '" no mapa. Escreva como "Cidade, UF".'); upd.partida = a.nome; upd.partida_lat = a.lat; upd.partida_lng = a.lng; await esperar(1100); }
+    if (g('re-fim') !== (info.chegada || '')) { var b = await ponto(g('re-fim')); if (b.nome && b.lat == null) throw new Error('Não achei a chegada "' + b.nome + '" no mapa. Escreva como "Cidade, UF".'); upd.chegada = b.nome; upd.chegada_lat = b.lat; upd.chegada_lng = b.lng; }
+    var r = q(await sb.from('rotas').update(upd).eq('codigo', info.codigo).select('codigo'));
+    if (!r.length) throw new Error('Sem permissão para alterar a rota.');
+    await carregarRotas(); toast('Rota ' + info.codigo + ' salva ✓'); loadVisitas();
+  } catch (e) { bt.disabled = false; toast(e.message, true); }
+}
+function abrirNovaRota() {
+  S.sheet = { type: 'novarota' };
+  openSheet(head('Nova rota', 'Depois inclua as cidades por dia (no máximo 3 por dia)') + '<div class="pb"><div class="fgrid">' +
+    '<div><label>Código *</label><input class="fld" id="nr-cod" placeholder="Ex.: R2 ou R1.6"></div>' +
+    '<div><label>Nome *</label><input class="fld" id="nr-nome" placeholder="Ex.: Triângulo · Uberaba e Uberlândia"></div>' +
+    '<div><label>Saída</label><input class="fld" id="nr-ini" value="Jaguariúna, SP"></div>' +
+    '<div><label>Chegada</label><input class="fld" id="nr-fim" value="Jaguariúna, SP"></div>' +
+    '<div class="full"><label>Observação</label><textarea class="fld" id="nr-obs"></textarea></div></div>' +
+    '<div class="note">Quando a saída é igual à chegada, o CRM conta cada dia saindo e voltando para a base. Se forem diferentes, os dias seguem em sequência.</div></div>' +
+    '<div class="pf"><button class="btn" data-act="close">Cancelar</button><button class="btn primary" data-act="rotaCriar" id="btnSave">Criar rota</button></div>');
+}
+async function criarRota() {
+  var g = function (id) { return document.getElementById(id).value.trim(); }, btn = document.getElementById('btnSave');
+  var cod = g('nr-cod').toUpperCase(), nome = g('nr-nome');
+  if (!/^R\d+(\.\d+)?$/.test(cod)) { toast('Use um código como R2 ou R1.6.', true); return; }
+  if (!nome) { toast('Dê um nome para a rota.', true); return; }
+  if (rotaInfo(cod)) { toast('Já existe a rota ' + cod + '.', true); return; }
+  busy(btn, true);
+  try {
+    var a = await ponto(g('nr-ini')); await esperar(1100); var b = await ponto(g('nr-fim'));
+    if ((a.nome && a.lat == null) || (b.nome && b.lat == null)) throw new Error('Não achei a saída ou a chegada no mapa. Escreva como "Cidade, UF".');
+    var ordem = ROTAS_DB.filter(function (r) { return r.codigo !== 'A planejar'; }).reduce(function (m, r) { return Math.max(m, r.ordem || 0); }, 0) + 10;
+    q(await sb.from('rotas').insert({ codigo: cod, nome: nome, ordem: ordem, partida: a.nome, partida_lat: a.lat, partida_lng: a.lng,
+      chegada: b.nome, chegada_lat: b.lat, chegada_lng: b.lng, observacao: g('nr-obs') || null }));
+    await carregarRotas(); S.rota = cod; closeSheet(); toast('Rota ' + cod + ' criada ✓ Agora inclua as cidades.'); if (S.tab === 'visitas') loadVisitas();
+  } catch (e) { busy(btn, false, 'Criar rota'); toast(e.message, true); }
 }
 // incluir cidade no percurso (com coordenada para estimar os km do dia)
 async function incluirCidade() {
@@ -1696,6 +1788,13 @@ async function incluirConta(conta, rota, dia, el) {
   if (el) el.disabled = true;
   try {
     var r = q(await sb.rpc('crm_rota_conta', { p_conta: conta, p_rota: rota, p_dia: dia || null }));
+    if (rota && rota !== 'A planejar') {
+      var par = q(await sb.from('rota_paradas').select('id,lat,contas(cidade,uf)').eq('rota', rota).eq('conta_id', conta)) || [];
+      if (par.length && !par[0].lat && par[0].contas && par[0].contas.cidade) {
+        var gc = await geoCidade(par[0].contas.cidade, par[0].contas.uf);
+        if (gc) await sb.from('rota_paradas').update({ lat: gc.lat, lng: gc.lng }).eq('id', par[0].id);
+      }
+    }
     atualizarRotaLocal(conta, r.rota);
     toast(r.msg || 'Feito ✓');
     if (S.tab === 'visitas') loadVisitas();
@@ -1712,7 +1811,7 @@ async function alterarParada(id, upd) {
 async function tirarParada(id) {
   var p = (S.vcache.paradas || []).filter(function (x) { return x.id === id; })[0]; if (!p) return;
   var nome = p.conta_id ? (p.contas || {}).nome : p.cidade;
-  if (!confirm('Tirar ' + nome + ' da ' + p.rota + '? As lojas dessa cidade saem da rota (ficam “A planejar” se não estiverem em outra).')) return;
+  if (!confirm('Tirar ' + nome + ' da ' + p.rota + '? As lojas dessa cidade saem da rota (as ativas ficam “A planejar” se não estiverem em outra).')) return;
   try { q(await sb.from('rota_paradas').delete().eq('id', id)); toast(nome + ' saiu da ' + p.rota + ' ✓'); loadVisitas(); } catch (e) { toast(e.message, true); }
 }
 
@@ -1757,10 +1856,18 @@ async function prestacaoContas(id) {
       '<button class="btn primary" style="width:100%;margin-top:8px" data-act="despSave" id="btnDesp">Lançar despesa</button></div>' : '') +
     '<div class="links" style="margin-top:14px"><button data-act="prestCSV">⬇️ Exportar prestação de contas (CSV)</button></div></div>');
 }
-function numBR(v) { var t = String(v || '').trim(); if (!t) return null; if (/,/.test(t)) t = t.replace(/\./g, '').replace(',', '.'); var n = Number(t); return isNaN(n) ? null : n; }
+function numBR(v) {
+  var t = String(v == null ? '' : v).replace(/R\$|\s/g, '');
+  if (!t) return null;
+  if (/,/.test(t)) t = t.replace(/\./g, '').replace(',', '.');
+  else if (/^-?\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, '');
+  var n = Number(t); return isNaN(n) ? null : n;
+}
+function intBR(v) { var n = numBR(v); return n == null ? null : Math.round(n); }
+function numTxt(v) { return v == null || v === '' ? '' : Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 }); }
 async function salvarViagem() {
   var p = S.prest, g = function (id) { return document.getElementById(id).value; };
-  var upd = { data_inicio: g('pv-ini') || null, data_fim: g('pv-fim') || null, km_saida: numBR(g('pv-kms')), km_volta: numBR(g('pv-kmv')), status: g('pv-st') };
+  var upd = { data_inicio: g('pv-ini') || null, data_fim: g('pv-fim') || null, km_saida: intBR(g('pv-kms')), km_volta: intBR(g('pv-kmv')), status: g('pv-st') };
   if (upd.km_saida != null && upd.km_volta != null && upd.km_volta < upd.km_saida) { toast('O odômetro da volta está menor que o da saída.', true); return; }
   upd.marcador_tiny = marcadorViagem(Object.assign({}, p.r, upd));
   try { var r = q(await sb.from('roteiros').update(upd).eq('id', p.r.id).select('id')); if (!r.length) throw new Error('Sem permissão para alterar este roteiro.'); toast('Viagem salva ✓'); prestacaoContas(p.r.id); }
@@ -1817,6 +1924,9 @@ async function salvarUsuario() {
   var g = function (id) { return document.getElementById(id).value.trim(); };
   var d = { nome: g('us-nome'), email: g('us-email').toLowerCase(), papel: g('us-papel'), nome_tiny: g('us-tiny') || null };
   if (!d.nome || !d.email) { toast('Informe o nome e o e-mail.', true); return; }
+  var igual = (D.sellers || []).filter(function (s) { return mesmoNome(s, d.nome); })[0];
+  if (igual) d.nome = igual;
+  else if (!confirm('O nome "' + d.nome + '" ainda não aparece em nenhuma loja ou lead do CRM. Confirma essa grafia?')) return;
   try { q(await sb.from('perfis').insert(d)); toast('Acesso liberado para ' + d.nome + ' ✓'); openAcessos(); } catch (e) { toast(e.message, true); }
 }
 async function exportar(qual) {
@@ -1828,6 +1938,7 @@ async function exportar(qual) {
 }
 
 /* ---------- eventos da v3 ---------- */
+document.addEventListener('submit', function (e) { if (e.target && (e.target.id === 'fNew' || e.target.id === 'fNewX')) e.preventDefault(); });
 document.addEventListener('click', function (e) {
   var t = e.target;
   if (t.matches && t.matches('.ck')) return; // marcar loja no roteiro não abre a ficha
@@ -1836,7 +1947,7 @@ document.addEventListener('click', function (e) {
   var el = t.closest && t.closest('[data-act],[data-abre],[data-visedit],[data-prest],[data-apagadesp],[data-comp],[data-pok],[data-pdel],[data-pconta]');
   if (!el) return;
   var d = el.dataset;
-  if (d.abre) { var p = d.abre.split(':'); closeSheet(); if (p[0] === 'prosp') openX(p[1]); else openLead(p[1]); return; }
+  if (d.abre) { var p = d.abre.split(':'); closeSheet(); if (p[0] === 'prosp') openX(p[1]); else if (p[0] === 'cliente') openPV(p[1]); else openLead(p[1]); return; }
   if (d.pok) { alterarParada(d.pok, { sugerida: false }); return; }
   if (d.pdel) { tirarParada(d.pdel); return; }
   if (d.pconta) { incluirConta(d.pconta, S.vcache.rota.codigo, Number((document.getElementById('pc-dia2') || {}).value) || null, el); return; }
@@ -1860,6 +1971,9 @@ document.addEventListener('click', function (e) {
     case 'forceNewX': saveNewX(true); break;
     case 'montar': montarRoteiro(); break;
     case 'paradaCidade': incluirCidade(); break;
+    case 'rotaEditar': salvarRota(); break;
+    case 'rotaNova': abrirNovaRota(); break;
+    case 'rotaCriar': criarRota(); break;
     case 'rotSave': salvarRoteiro(); break;
     case 'viagemSave': salvarViagem(); break;
     case 'despSave': salvarDespesa(); break;
@@ -1873,11 +1987,12 @@ document.addEventListener('click', function (e) {
       try {
         var user = (await sb.auth.getUser()).data.user;
         q(await sb.from('visitas').insert({ conta_id: F.conta, situacao: g('vn-sit'), data_visita: g('vn-data') || null, hora: g('vn-hora') || null, observacoes: g('vn-obs') || null, agendado_por: D.me, criado_por: user.email }));
+        ['vn-data', 'vn-hora', 'vn-obs'].forEach(function (id) { var x = document.getElementById(id); if (x) x.value = ''; });
         toast('Pedido de visita registrado ✓'); F.vis = null; loadVis();
       } catch (er) { el.disabled = false; toast(er.message, true); }
     })(); break;
     case 'visEditSave': (async function () {
-      var g = function (id) { return document.getElementById(id).value; }, v = (F.vis.rows || []).filter(function (x) { return x.id === d.id; })[0];
+      var g = function (id) { return document.getElementById(id).value; }, v = ((F.vis && F.vis.rows) || []).filter(function (x) { return x.id === d.id; })[0];
       var upd = { situacao: g('ve-sit'), resultado: g('ve-res') || null, valor_pedido: numBR(g('ve-valor')), observacoes: g('ve-obs') || null, data_visita: g('ve-data') || null, hora: g('ve-hora') || null };
       if (upd.situacao === 'realizada' && v && v.situacao !== 'realizada') upd.checkin_em = new Date().toISOString();
       if (upd.situacao === 'reagendar' && upd.data_visita && v && upd.data_visita !== v.data_visita) upd.situacao = 'agendada'; // nova data volta a ser visita agendada
@@ -1889,7 +2004,8 @@ document.addEventListener('click', function (e) {
 });
 document.addEventListener('change', function (e) {
   var t = e.target;
-  if (t.id === 'vRota') { S.rota = t.value; loadVisitas(); }
+  if (t.classList && t.classList.contains('v-marca')) { S.vmarc = S.vmarc || {}; S.vmarc[t.value] = t.checked; }
+  if (t.id === 'vRota') { S.rota = t.value; S.vmarc = {}; loadVisitas(); }
   if (t.id === 'vFiltro') { S.vfiltro = t.value; loadVisitas(); }
   if (t.id === 'vis-rota') {
     var conta = F.conta;
