@@ -15,6 +15,8 @@
   background: var(--bege);
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
+.rolagem { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 body { margin: 0; min-height: 100vh; background: var(--bege); }
 button, input, select, textarea { font: inherit; }
 a { color: var(--marrom); }
@@ -79,7 +81,13 @@ label { font-size: 12px; color: var(--marrom); display: block; margin-bottom: 3p
 .links { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0 10px; }
 .links a { text-decoration: none; background: var(--branco); padding: 5px 10px; border-radius: 8px; font-size: 13px; border: 1px solid var(--bege-2); }
 .colunas { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-@media (max-width: 760px) { .colunas { grid-template-columns: 1fr; } .tabela .oculta-cel { display: none; } }
+@media (max-width: 760px) {
+  .colunas { grid-template-columns: 1fr; }
+  .tabela .oculta-cel { display: none; }
+  .tabela .selo { white-space: normal; }
+  .tabela td, .tabela th { padding: 6px; }
+  .tabela th { position: static; }
+}
 
 .linha-tempo { list-style: none; padding: 0; margin: 0; max-height: 360px; overflow-y: auto; }
 .linha-tempo li { padding: 8px 0; border-bottom: 1px dashed var(--bege-2); font-size: 13px; }
